@@ -1,0 +1,17 @@
+% Title Page
+\vspace{6em}
+\begin{center}
+    {\Large \textbf{$title$}} \\[1em]
+    \textbf{$for(author)$$author$$sep$ \and $endfor$} \\[1em]
+    \today \\[1em]
+\end{center}
+\textbf{Abstract} \\[1em]
+% Add abstract text here
+$if(abstract)$
+$abstract$
+$else$
+\lipsum[1] % Replace this with your abstract text (maximum 200 words)
+$endif$
+\vspace{2em}
+
+\newpage

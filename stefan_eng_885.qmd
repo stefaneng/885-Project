@@ -1,0 +1,186 @@
+---
+title: "885 Project"
+author: "Stefan Eng"
+date: "`r Sys.Date()`"
+engine: knitr
+execute:
+  echo: false
+  message: false
+  warning: false
+format:
+  pdf:
+    documentclass: article
+    fontsize: 12pt
+    geometry:
+      - margin=1in
+    template-partials:
+      - tex_partials/title.tex
+      - tex_partials/before-body.tex
+include-in-header:
+  text: |
+    \usepackage{setspace}
+    \usepackage{lipsum}
+    \doublespacing
+    \linespread{2} % Ensures 25 lines per page
+    \setlength{\textheight}{9.5in} % Adjust text height for 1-inch margins and 25 lines
+    \setlength{\parindent}{0pt}
+    \setlength{\parskip}{1em}
+abstract: |
+  This is the abstract.
+---
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+library(mgcv)
+library(ggplot2)
+library(gratia)
+library(survival)
+library(survminer)
+library(ggsurvfit)
+library(scales)
+data(heart)
+heart2 <- read.table("Heart_data.txt", skip = 18, header = TRUE)
+heart2$reject <- as.factor(heart2$reject)
+heart2$surgery <- as.factor(heart2$surgery)
+heart2$transplant <- as.factor(heart2$transplant)
+heart2$survived <- as.factor(heart2$fustat == 0)
+heart$transplant_fct <- as.factor(heart$transplant)
+heart2$transplant_fct <- as.factor(heart2$transplant)
+levels(heart$transplant_fct) <- c("No transplant", "Transplant")
+
+# Note: It looks like the heart dataset from class is the same cases but heart in survival
+# adds controls
+
+# TODO: Swap out for heart with more subjects
+heart$futime <- heart$stop - heart$start
+heart$age <- heart$age + 48
+
+colortheme2 <- c("#FDB44E", "skyblue")
+theme_set(theme_classic())
+```
+
+## Introduction
+
+TODO: All chatGPT done, need to re-write
+
+Heart transplantation is a critical intervention for patients with end-stage heart failure, offering a potential extension of life and potential for improved quality of life.
+The decision for a doctor to advise a patient to undergo a heart transplant is a complex one as it may negatively influence patient survival as well.
+This is influenced by various factors, including patient age and clinical status.
+Understanding the impact of heart transplantation on patient survival is essential for optimizing treatment strategies and resource allocation.
+
+The Stanford Heart Transplant dataset (Cite: Crawford 77) provides a valuable resource for studying survival outcomes in patients awaiting or undergoing heart transplantation.
+This dataset has been analyzed extensively in the literature, with researchers using it to develop and validate survival models, including Cox proportional hazards models.
+Derived from a cohort at Stanford University, this dataset includes detailed time-to-event data, allowing for a nuanced analysis of survival probabilities, the effects of treatment, and the role of patient characteristics over time.
+
+In Crawford 77:
+- "A quadratic effect of age is suggested" due to stratified analysis on age
+
+In this study, we leverage the Stanford Heart Transplant dataset (from `survival::heart`) to investigate the survival effects of heart transplantation while accounting for patient age and time-dependent factors. Specifically, we aim to: examine the non-linear interaction between age and transplant for survival outcomes for both logistic and survival models.
+We will use both local linear kernel methods and smoothing splines to model the time-varying coefficient models and explore the potential impact of transplant rejection, waiting time, and HLA mismatch on patient survival.
+
+## Results
+
+### Descriptive statistics (TODO: Change name)
+
+There are `r nrow(heart)` subjects from the heart transplant dataset, which adds an additional 69 patients to the 103 original patients from the Stanford Heart Transplant dataset.
+These additional patients are all controls as they did not receive a transplant and survived or were censored.
+There are a total of `r sum(heart$fustat) == 0` deaths and `r sum(heart$fustat == 1)` censored/survival observations in the dataset (`r label_percent()(mean(heart$fustat))`).
+See @tbl-1 in the appendix for a summary of the dataset.
+
+### Cox Proportional Hazard age-varying transplant model
+
+```{r}
+#| fig-height: 6
+#| fig-width: 8
+gams_model <- gam(
+    futime ~ s(age, by = transplant_fct, bs = "bs"),
+    family = cox.ph,
+    data = heart,
+    weights = event
+)
+k <- 100
+pred_data <- expand.grid(
+  futime = seq(min(heart$stop), max(heart$stop), length.out = k),
+  age = quantile(heart$age, probs = seq(0.1, 0.5, length.out = 4)),
+  transplant = c(rep(0, k), rep(1, k)))
+
+pred_data$transplant_fct <- as.factor(pred_data$transplant)
+levels(pred_data$transplant_fct) <- c("No transplant", "Transplant")
+
+gam_preds <- predict(
+  gams_model,
+  newdata = data.frame(pred_data), se.fit = TRUE, type = "response")
+
+plot_data <- cbind(pred_data, fit = gam_preds$fit, lower_ci = gam_preds$fit - 1.96 * gam_preds$se.fit, upper_ci = gam_preds$fit + 1.96 * gam_preds$se.fit)
+
+ggplot(plot_data) +
+  facet_wrap(~ as.factor(age), ncol = 2, labeller = labeller(
+    `as.factor(age)` = function(x) paste("Age:", round(as.numeric(x), 2))
+  )) +
+  geom_line(aes(x = futime, y = fit, color = as.factor(transplant))) +
+  geom_ribbon(aes(x = futime, ymin = lower_ci, ymax = upper_ci, fill = as.factor(transplant)), alpha = 0.2) +
+  theme_classic() +
+  scale_fill_manual(
+    values = colortheme2,
+    name = "",
+    labels = c("No transplant", "Transplant")
+    ) +
+  scale_color_manual(
+    values = colortheme2,
+    name = "",
+    labels = c("No transplant", "Transplant")
+    ) +  
+  labs(title = "Predicted survival probabilities from GAM",
+       x = "Time", y = "Survival probability") +
+  ylim(c(0, 1)) +
+  theme(
+    legend.position = "inside",
+    legend.position.inside = c(0.85, 0.9)
+  )
+```
+
+
+## Methods
+
+### Logistic Regression Model with varying coefficients via smoothing splines
+Let $Y_i$ be the binary outcome variable indicating whether patient $i$ survived or died.
+Denote $T_i$ as the transplant status of a patient.
+We model the log-odds of survival as a function of patient age and transplant status using a logistic regression varying-coefficient model:
+
+$$
+g(\mu_i) = \beta_0 + \theta_1(\text{age}_i)I(T_i = 1) + \theta_2(\text{age}_i)I(T_i = 0)
+$$
+
+where $\theta_i$ are smoothing splines of age for patients with and without transplants.
+
+
+### Kernel Methods
+- Local linear fitting with varying coefficients (?)
+- Something like this chatGPT answer: https://chatgpt.com/c/674f5f0e-d974-8012-a5d5-e386fa864e14
+- Pg 41 of the notes good for this
+
+### Smoothing splines
+- Age + transplant
+- 
+
+## Methods
+
+## Discussion
+
+## References
+...
+
+## Appendix
+
+```{r table1}
+#| label: tbl-1
+#| tbl-cap: "Cohort characteristics of the 103 Stanford Heart Transplant dataset"
+library(table1)
+heart2$survival <- as.factor(heart2$fustat == 0)
+levels(heart2$survival) <- c("Died", "Survived/Censored")
+table1(~ futime + age + surgery + transplant + mscore + reject + wait.time + mismatch + hla.a2 | survival, data = heart2)
+```
+
+### Exploratory plots

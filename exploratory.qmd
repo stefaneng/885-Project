@@ -1,0 +1,216 @@
+---
+title: "Exploratory analysis 885"
+author: "Stefan Eng"
+format: html
+---
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+library(mgcv)
+library(ggplot2)
+library(gratia)
+library(survival)
+library(survminer)
+library(ggsurvfit)
+library(scales)
+data(heart)
+heart2 <- read.table("Heart_data.txt", skip = 18, header = TRUE)
+heart2$reject <- as.factor(heart2$reject)
+heart2$surgery <- as.factor(heart2$surgery)
+heart2$transplant <- as.factor(heart2$transplant)
+heart2$survived <- as.factor(heart2$fustat == 0)
+
+# Note: It looks like the heart dataset from class is the same cases but heart in survival
+# adds controls
+
+# TODO: Swap out for heart with more subjects
+heart$futime <- heart$stop - heart$start
+heart$age <- heart$age + 48
+
+colortheme2 <- c("#FDB44E", "skyblue")
+theme_set(theme_classic())
+```
+
+## Analysis plan
+Questions: 
+- What is the interaction with age?
+- What about the interaction with transplant wait time or the interaction with transplant mismatch?
+- `with(heart2, table(fustat, reject))` shows that rejection is a strong predictor of death
+- if we reject then 
+
+Methods:
+- Fit logistic regression and survival models with varying time models
+- At minimum use local kernel regression and smoothing splines
+- Incorporating copulas would be interesting
+
+## Basic summary of data
+
+## Exploratory
+
+### Heatmap of correlation matrix
+```{r}
+numeric_heart2 <- heart2[sapply(heart2, is.numeric)]
+spearman_cor <- cor(numeric_heart2, method = "spearman", use = "pairwise.complete.obs")
+corrplot::corrplot(
+  spearman_cor, diag = F, type = "upper",
+  method = "number",
+  order = "hclust", is.corr = TRUE,
+  )
+```
+
+### Age vs futime by transplant/survived
+
+```{r}
+# Plot this by each factor in g
+ggplot(heart2, aes(x = age, y = futime)) +
+  facet_grid(rows = vars(transplant),
+             cols = vars(survived),
+             labeller = label_both) +
+  geom_point() +
+  geom_smooth(method = "gam", formula = y ~ s(x)) +
+  theme_minimal()
+
+# # For future results?
+heart$transplant <- as.logical(as.numeric(heart$transplant) - 1)
+heart$died <- as.logical(heart$event)
+ggplot(heart, aes(x = age, y = futime)) +
+  facet_grid(rows = vars(transplant),
+             cols = vars(died),
+             labeller = label_both) +
+  geom_point() +
+  geom_smooth(method = "gam", formula = y ~ s(x)) +
+  theme_minimal()
+```
+
+### wait.time vs futime by transplant/survived
+```{r}
+ggplot(heart2, aes(x = wait.time, y = futime)) +
+  facet_grid(cols = vars(survived),
+             labeller = label_both) +
+  geom_point() +
+  geom_smooth(method = "gam", formula = y ~ s(x)) +
+  theme_minimal()
+```
+
+### Age density
+```{r}
+ggplot(heart, aes(x = age, fill = died)) +
+  geom_density(alpha = 0.7) +
+  labs(title = "Density plot of age by survival status", x = "Age", y = "Density") +
+  scale_fill_manual(values = colortheme2) +
+  theme_minimal()
+```
+
+### Survival time
+```{r}
+ggplot(heart2, aes(x = futime, fill = survived)) +
+  geom_density(alpha = 0.7) +
+  labs(title = "Density plot of follow up time by survival status", x = "Time", y = "Density") +
+  scale_fill_manual(values = colortheme2) +
+  theme_minimal()
+```
+
+### Transplant status KM plot
+```{r}
+heart$transplant_fct <- as.factor(heart$transplant)
+heart2$transplant_fct <- as.factor(heart2$transplant)
+levels(heart$transplant_fct) <- c("No transplant", "Transplant")
+
+survfit2(Surv(start, stop, event) ~ transplant_fct, data = heart) %>%
+  ggsurvfit() +
+  add_confidence_interval() +
+  add_risktable() +
+  theme_classic()
+
+
+survfit2(Surv(futime, fustat) ~ transplant_fct, data = heart2) %>%
+  ggsurvfit() +
+  add_confidence_interval() +
+  add_risktable() +
+  theme_classic()
+```
+
+### Age split at median + transplant status KM plot
+```{r}
+# Divide age into median
+# Then plot 4 km plots for age, transplant
+print(median(heart$age))
+#agg_data <- aggregate(heart$age, by = list(heart$transplant), FUN = median)
+#heart$age_group <- ifelse(heart$age < median(heart$age), "below median age", "above median age")
+heart$age_group <- cut(heart$age, breaks = quantile(heart$age, probs = seq(0, 1, 0.5)))
+heart2$age_group <- cut(heart2$age, breaks = quantile(heart2$age, probs = seq(0, 1, 0.5)))
+
+
+survfit2(Surv(start, stop, event) ~ age_group + transplant_fct, data = heart) %>%
+  ggsurvfit() +
+  add_confidence_interval() +
+  add_risktable() +
+  theme_classic()
+
+survfit2(Surv(futime, fustat) ~ age_group + transplant_fct, data = heart2) %>%
+  ggsurvfit() +
+  add_confidence_interval() +
+  add_risktable() +
+  theme_classic()
+```
+
+### Empirical copula relationships between the variables
+```{r, eval = FALSE}
+# Scale variables to [0, 1] using ranks
+heart_scaled <- as.data.frame(lapply(heart2, function(x) {
+  if (is.numeric(x)) rank(x, ties.method = "average") / length(x) else x
+}))
+
+# Split by survival status
+
+
+# Fit Gaussian copula and create contour plot
+emp_cop <- empCopula(cbind(u, v), smoothing = "beta")
+grid <- expand.grid(U = seq(0, 1, length.out = 50), V = seq(0, 1, length.out = 50))
+density <- dCopula(as.matrix(grid), emp_cop)
+grid$density <- density
+
+ggplot(grid, aes(x = U, y = V, z = density)) +
+  geom_contour_filled() +
+  labs(title = paste("Copula Density Contour:", var1, "vs", var2), x = var1, y = var2) +
+  theme_minimal()
+```
+
+### Transplant status + mismatch KM plot
+TODO
+
+## Survival model
+```{r}
+heart_coxph <- coxph(Surv(start, stop, event) ~ surgery, data = heart)
+
+# Plot KM curves for the two groups
+ggsurvplot(survfit(Surv(start, stop, event) ~ surgery, data = heart))
+
+# Split into quantiles for age
+ggsurvplot(survfit(Surv(start, stop, event) ~ age_group + surgery, data = heart))
+```
+
+## Logistic Regression first
+```{r}
+pred_data <- expand.grid(
+  age = seq(min(heart$age), max(heart$age), length.out = 100),
+  transplant_fct = as.factor(c('No transplant', 'Transplant')))
+
+#pred_data$surgery_transplant <- interaction(pred_data$surgery, pred_data$transplant)
+#heart$surgery_transplant <- interaction(heart$surgery, heart$transplant)
+log_model <- gam(event ~ s(age, by = transplant_fct, bs = "bs"), data = heart, family = binomial)
+log_preds <- predict(log_model, newdata = pred_data, type = "response", se.fit = TRUE)
+plot_data <- cbind(
+  pred_data, prob = log_preds$fit, lower_ci = log_preds$fit - 1.96 * log_preds$se.fit, upper_ci = log_preds$fit + 1.96 * log_preds$se.fit)
+ggplot(plot_data) +
+  geom_line(aes(x = age, y = prob, color = transplant_fct)) +
+  geom_ribbon(aes(x = age, ymin = lower_ci, ymax = upper_ci, fill = transplant_fct), alpha = 0.2) +
+  labs(title = "Predicted probability of death", x = "Age", y = "Probability of death") +
+  theme_classic() +
+  ylim(c(0,1))
+```
+
+## Survival GAM
+
