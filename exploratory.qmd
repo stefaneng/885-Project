@@ -21,6 +21,7 @@ heart2$reject <- as.factor(heart2$reject)
 heart2$surgery <- as.factor(heart2$surgery)
 heart2$transplant <- as.factor(heart2$transplant)
 heart2$survived <- as.factor(heart2$fustat == 0)
+heart2$event <- heart2$fustat
 
 # Note: It looks like the heart dataset from class is the same cases but heart in survival
 # adds controls
@@ -124,7 +125,6 @@ survfit2(Surv(start, stop, event) ~ transplant_fct, data = heart) %>%
   add_risktable() +
   theme_classic()
 
-
 survfit2(Surv(futime, fustat) ~ transplant_fct, data = heart2) %>%
   ggsurvfit() +
   add_confidence_interval() +
@@ -163,9 +163,6 @@ heart_scaled <- as.data.frame(lapply(heart2, function(x) {
   if (is.numeric(x)) rank(x, ties.method = "average") / length(x) else x
 }))
 
-# Split by survival status
-
-
 # Fit Gaussian copula and create contour plot
 emp_cop <- empCopula(cbind(u, v), smoothing = "beta")
 grid <- expand.grid(U = seq(0, 1, length.out = 50), V = seq(0, 1, length.out = 50))
@@ -183,7 +180,17 @@ TODO
 
 ## Survival model
 ```{r}
-heart_coxph <- coxph(Surv(start, stop, event) ~ surgery, data = heart)
+pred_data <- expand.grid(
+  futime = seq(0, max(heart$futime), length.out = 100),
+    age = seq(min(heart$age), max(heart$age), length.out = 100),
+  transplant = unique(heart$transplant),
+  surgery = unique(heart$surgery))
+
+heart_coxph <- coxph(Surv(futime, event) ~ surgery*age + transplant * age, data = heart)
+
+est <- survfit(heart_coxph, newdata = pred_data)
+ggsurvfit(survfit2(Surv(futime, event) ~ surgery*age + transplant * age), data = newdata) +
+  theme_minimal()
 
 # Plot KM curves for the two groups
 ggsurvplot(survfit(Surv(start, stop, event) ~ surgery, data = heart))
@@ -196,17 +203,18 @@ ggsurvplot(survfit(Surv(start, stop, event) ~ age_group + surgery, data = heart)
 ```{r}
 pred_data <- expand.grid(
   age = seq(min(heart$age), max(heart$age), length.out = 100),
+  transplant = unique(heart$transplant),
   transplant_fct = as.factor(c('No transplant', 'Transplant')))
 
 #pred_data$surgery_transplant <- interaction(pred_data$surgery, pred_data$transplant)
 #heart$surgery_transplant <- interaction(heart$surgery, heart$transplant)
-log_model <- gam(event ~ s(age, by = transplant_fct, bs = "bs"), data = heart, family = binomial)
+log_model <- gam(event ~ s(age, by = transplant, bs = "bs"), data = heart2, family = binomial)
 log_preds <- predict(log_model, newdata = pred_data, type = "response", se.fit = TRUE)
 plot_data <- cbind(
   pred_data, prob = log_preds$fit, lower_ci = log_preds$fit - 1.96 * log_preds$se.fit, upper_ci = log_preds$fit + 1.96 * log_preds$se.fit)
 ggplot(plot_data) +
-  geom_line(aes(x = age, y = prob, color = transplant_fct)) +
-  geom_ribbon(aes(x = age, ymin = lower_ci, ymax = upper_ci, fill = transplant_fct), alpha = 0.2) +
+  geom_line(aes(x = age, y = prob, color = transplant)) +
+  geom_ribbon(aes(x = age, ymin = lower_ci, ymax = upper_ci, fill = transplant), alpha = 0.2) +
   labs(title = "Predicted probability of death", x = "Age", y = "Probability of death") +
   theme_classic() +
   ylim(c(0,1))
