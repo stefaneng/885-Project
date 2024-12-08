@@ -1,7 +1,14 @@
+heart2 <- heart
+heart <- survival::heart
+
+heart$futime <- heart$stop - heart$start
+heart$age <- heart$age + 48
+
 gam_cox_formulas <- list(
   "futime ~ surgery * transplant * age",
   'futime ~ surgery + transplant + s(age, by = surgery, bs = "bs")',
-  "futime ~ surgery + transplant + s(age, by = transplant, bs = 'bs') + s(age, by = surgery, bs = 'bs')"
+  "futime ~ surgery + transplant + s(age, by = transplant, bs = 'bs')",
+  "futime ~ surgery:transplant + surgery + transplant + s(age, by = transplant, bs = 'bs') + s(age, by = surgery, bs = 'bs')"
 )
 
 nice_formulas <- lapply(gam_cox_formulas, function(fc) {
@@ -36,19 +43,11 @@ gam_mods <- lapply(gam_cox_formulas, function(fc) {
   )
 })
 
-# Anova
-# print(anova(gam_mods[[1]]$ml, gam_mods[[2]]$ml, test = "Chisq"))
-# print(anova(gam_mods[[1]]$ml, gam_mods[[3]]$ml, test = "Chisq"))
-
-# Apply tidy to both parametric and non-parametric terms
-#tidy(gam_mods[[2]]$reml, parametric = TRUE)
-#tidy(gam_mods[[2]]$reml)
-
 gam_table_aic <- bind_rows(lapply(gam_mods, function(m) {
   m[c("formula", "aic", "deviance")]
 }))
 
-final_gam_model_cox <- gam_mods[[2]]
+final_gam_model_cox <- gam_mods[[which.min(gam_table_aic$aic)]]
 
 # # Create table from AIC/deviance
 gam_mods_table <- bind_rows(lapply(gam_mods, function(mod) {
@@ -61,3 +60,6 @@ gam_mods_table <- bind_rows(lapply(gam_mods, function(mod) {
     return(bind_rows(par_terms, cbind(nonpar_terms, parametric = FALSE)))
   }
 }), .id = "mod")
+
+
+heart <- heart2

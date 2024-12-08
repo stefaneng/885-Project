@@ -1,18 +1,13 @@
 gam_glm_formulas <- list(
   "event ~ surgery * transplant * age",
   'event ~ surgery + transplant + s(age, by = surgery, bs = "bs")',
-  "event ~ surgery + transplant + s(age, by = transplant, bs = 'bs') + s(age, by = surgery, bs = 'bs')"
+  "event ~ surgery + transplant + s(age, by = transplant, bs = 'bs')",
+  "event ~ surgery:transplant + surgery + transplant + s(age, by = transplant, bs = 'bs') + s(age, by = surgery, bs = 'bs')"
 )
-
-nice_formulas <- lapply(gam_cox_formulas, function(fc) {
-  f <- formula(fc)
-  reformulate(labels(terms(f)), f[[2]])[[3]]
-})
 
 gam_mods_glm <- lapply(gam_glm_formulas, function(fc) {
   f <- formula(fc)
   nice_formula <- reformulate(labels(terms(f)), f[[2]])[[3]]
-
   reml_mod <- gam(
     formula = formula(f),
     data = heart,
@@ -34,15 +29,18 @@ gam_mods_glm <- lapply(gam_glm_formulas, function(fc) {
   )
 })
 
-gam_table_aic <- bind_rows(lapply(gam_mods_glm, function(m) {
+gam_table_aic_logit <- bind_rows(lapply(gam_mods_glm, function(m) {
   m[c("formula", "aic", "deviance")]
 }))
 
-final_gam_model_logit <- glm(
+model_logit <- glm(
   event ~ surgery * transplant * age,
   data = heart,
   family = binomial
 )
+
+final_gam_model_logit <- gam_mods_glm[[which.min(sapply(gam_mods_glm, function(m) m$aic))]]
+
 #
 # # # Create table from AIC/deviance
 # gam_mods_table <- bind_rows(lapply(gam_mods, function(mod) {
