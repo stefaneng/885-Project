@@ -41,6 +41,7 @@ library(survminer)
 library(ggsurvfit)
 library(scales)
 library(dplyr)
+library(broom)
 data(heart)
 heart2 <- read.table("Heart_data.txt", skip = 18, header = TRUE)
 heart2$reject <- as.factor(heart2$reject)
@@ -62,7 +63,7 @@ heart <- heart2
 #heart$age <- heart$age + 48
 
 colortheme2 <- c("#FDB44E", "skyblue")
-theme_set(theme_classic())
+theme_set(theme_minimal())
 ```
 
 ## Introduction
@@ -78,10 +79,9 @@ The Stanford Heart Transplant dataset (Cite: Crawford 77) provides a valuable re
 This dataset has been analyzed extensively in the literature, with researchers using it to develop and validate survival models, including Cox proportional hazards models.
 Derived from a cohort at Stanford University, this dataset includes detailed time-to-event data, allowing for a nuanced analysis of survival probabilities, the effects of treatment, and the role of patient characteristics over time.
 
-In Crawford 77:
-- "A quadratic effect of age is suggested" due to stratified analysis on age
-
-In this study, we leverage the Stanford Heart Transplant dataset (from `survival::heart`) to investigate the survival effects of heart transplantation while accounting for patient age and time-dependent factors. Specifically, we aim to: examine the non-linear interaction between age and transplant for survival outcomes for both logistic and survival models.
+In this study we use the original 103 patient Stanford Heart Transplant dataset to investigate the survival effects of heart transplantation while accounting for patient age and time-dependent factors.
+This is largely an exploratory analysis which could form the basis for future research on heart transplantation survival.
+Specifically, we aim to examine the non-linear interaction between age and transplant for survival outcomes for both logistic and survival models.
 We will use both local linear kernel methods and smoothing splines to model the time-varying coefficient models and explore the potential impact of transplant rejection, waiting time, and HLA mismatch on patient survival.
 
 ## Results
@@ -95,141 +95,236 @@ See @tbl-1 in the appendix for a summary of the dataset.
 
 ### Indication of non-linear interaction
 
-In @fig-age-transplant-interaction, we observe a potential non-linear interaction between age and transplant status on follow-up time.
+In @fig-age-transplant-interaction, we observe a potential non-linear interaction between age and both transplant status and previous bypass surgery on follow-up time.
 Those that survived and did received a transplant appear to have a different relationship between age and follow-up time compared to those that did not receive a transplant.
 The univariate smooth spline fit only indicates a quadratic relationship in which follow-up time is increased for median age patients for the survived and transplant group.
 There is visually a similar pattern for those patients that died and received transplant but the penalized smoothing spline fit is essentially flat.
+We see a similar pattern for the interaction between age and bypass surgery on follow-up time in @fig-age-surgery-interaction.
 We also explored the relationship between age and follow-up time for those that received a transplant by pre-transplant bypass surgery status but did not observe any clear patterns See @fig-surgery-transplant-interaction in the appendix.
 These results are consistent with the original work done in [@crowley1977] in which they did a stratified analysis on age groups $[8,40), [40,50), [50,65)$ which suggested a quadratic effect of age though this was not statistically significant.
 
 
 ```{r}
 #| label: fig-age-transplant-interaction
-#| fig-height: 5
+#| fig-height: 4
 #| fig-width: 7
-#| fig-caption: "Interaction between age and transplant status on follow-up time"
+#| fig-cap: "Interaction between age and transplant status on follow-up time"
 ggplot(heart2, aes(x = age, y = futime)) +
   facet_grid(rows = vars(transplant),
              cols = vars(survived),
-             labeller = label_both) +
+             labeller = labeller(
+               survived = function(x) ifelse(x, "Survived", "Died"),
+               transplant = function(x) ifelse(x == 1, "Transplant", "No Transplant")
+            )) +
   geom_point() +
   geom_smooth(method = "gam", formula = y ~ s(x, bs = "bs")) +
-  theme_minimal() +
+  theme_classic() +
   ylab("Follow-up time") +
   xlab("Age") +
-  ylim(c(0, max(heart2$futime) + 10))
+  coord_cartesian(ylim = c(0, max(heart2$futime) + 10))
 ```
 
-### Cox Proportional Hazard age-varying transplant model
+```{r}
+#| label: fig-age-surgery-interaction
+#| fig-height: 4
+#| fig-width: 7
+#| fig-cap: "Interaction between age and bypass surgery on follow-up time"
+ggplot(heart2, aes(x = age, y = futime)) +
+  facet_grid(rows = vars(surgery),
+             cols = vars(survived),
+             labeller = labeller(
+               survived = function(x) ifelse(x, "Survived", "Died"),
+               surgery = function(x) ifelse(x == 1, "Bypass Surgery", "No bypass")
+            )) +
+  geom_point() +
+  geom_smooth(method = "gam", formula = y ~ s(x, bs = "bs")) +
+  theme_classic() +
+  ylab("Follow-up time") +
+  xlab("Age") +
+  coord_cartesian(ylim = c(0, max(heart2$futime) + 10))
+```
+
+### Logistic regression age-varying models
+
+```{r}
+#| label: fig-local-kernel-glm
+#| fig-height: 6
+#| fig-width: 8
+#| fig-cap: "Predicted survival probabilities from logistic regression model. The model includes a three-way intercept between transplant status, prior bypass and age. We predict the survival time subset by transplant status and bypass surgery status with three ages 39.7, 47.8, 53.0 which correspond to quantiles of 20%, 50% and 80%. The shaded area represents the 95% Bayesian credible intervals."
+
+source("gam_model_glm.R")
+
+k <- 100
+pred_data_logit <- expand.grid(
+  age = seq(min(heart$age) + 1, max(heart$age) - 1, length.out = 100),
+  transplant = c(0,1),
+  surgery = c(0,1))
+
+pred_data_logit$transplant <- as.factor(pred_data_logit$transplant)
+pred_data_logit$surgery <- as.factor(pred_data_logit$surgery)
+
+gam_preds_logit <- predict(
+  final_gam_model_logit,
+  newdata = data.frame(pred_data_logit), se.fit = TRUE, type = "response")
+
+plot_data_logit <- cbind(
+  pred_data_logit,
+  fit = 1 - gam_preds_logit$fit,
+  lower_ci = (1 - gam_preds_logit$fit) - 1.96 * gam_preds_logit$se.fit,
+  upper_ci = (1 - gam_preds_logit$fit) + 1.96 * gam_preds_logit$se.fit)
+
+factor_levels <- c("No transplant", "Transplant")
+  
+ggplot(plot_data_logit) +
+  facet_wrap(
+    ~ surgery
+    labeller = labeller(
+      surgery = function(x) ifelse(x == 1, "Bypass Surgery", "No bypass")
+  )
+) +
+  geom_line(
+    aes(x = age, y = fit,
+        color = as.factor(transplant)
+          )) +
+  geom_ribbon(aes(x = age, ymin = lower_ci, ymax = upper_ci, fill = as.factor(transplant),
+          ), alpha = 0.2) +
+  theme_classic() +
+  scale_color_manual(
+    name = "",
+    labels = factor_levels,
+    values = colortheme2
+  ) +
+  scale_fill_manual(
+    name = "",
+    labels = factor_levels,
+    values = colortheme2
+    ) +
+  labs(title = "Predicted survival probabilities from logistic regression",
+       x = "Age", y = "Survival probability") +
+  coord_cartesian(ylim = c(0, 1)) +
+  scale_y_continuous(breaks = c(0, 0.5, 1))
+```
+
+### Cox Proportional Hazard age-varying models
+
+We fit a Cox proportional hazards models to the time-to-event data to investigate the relationship between age, transplant status, and survival.
+Based on exploratory analysis, we fit three models: a linear model with three-way interaction between bypass surgery, transplant, and age.
+To assess how the model fits the data we predict the survival time subset by transplant status and bypass surgery status with three ages 39.7, 47.8, 53.0 which correspond to quantiles of 20%, 50% and 80% as shown in @fig-gam-survival-surgery.
 
 ```{r}
 #| label: fig-gam-survival-surgery
 #| fig-height: 6
 #| fig-width: 8
-#| fig-caption: "Predicted survival probabilities from generalized additive age-varying model. "
-gams_model <- gam(
-    futime ~ surgery + s(age, by = transplant, bs = "bs"),
-    family = cox.ph,
-    data = heart,
-    weights = event
-)
+#| fig-cap: "Predicted survival probabilities from generalized additive age-varying Cox proportional hazard model. The model includes age-varying coefficient for bypass surgery and intercepts for transplant status. We predict the survival time subset by transplant status and bypass surgery status with three ages 39.7, 47.8, 53.0 which correspond to quantiles of 20%, 50% and 80%. The shaded area represents the 95% Bayesian credible intervals."
 
-gams_model2 <- gam(
-    futime ~ s(age, by = transplant, bs = "bs") + s(age, by = surgery, bs = "bs"),
-    family = cox.ph,
-    data = heart,
-    weights = event
-)
-
-# summary(gams_model)
+source("gam_model_cox.R")
 
 k <- 100
 pred_data <- expand.grid(
-  futime = seq(0, max(heart$futime), length.out = k),
-  age = quantile(heart$age, probs = seq(0.1, 0.5, length.out = 4)),
+  futime = seq(0, max(heart2$futime), length.out = k),
+  age = quantile(heart2$age, probs = c(0.2, 0.5, 0.8)),
   transplant = c(0,1),
   surgery = c(0,1))
 
-# pred_data$transplant_fct <- as.factor(pred_data$transplant)
 levels(pred_data$transplant) <- c("No transplant", "Transplant")
 
 gam_preds <- predict(
-  gams_model,
+  final_gam_model_cox$reml,
   newdata = data.frame(pred_data), se.fit = TRUE, type = "response")
 
-plot_data <- cbind(pred_data, fit = gam_preds$fit, lower_ci = gam_preds$fit - 1.96 * gam_preds$se.fit, upper_ci = gam_preds$fit + 1.96 * gam_preds$se.fit)
+plot_data <- cbind(
+  pred_data,
+  fit = gam_preds$fit,
+  lower_ci = gam_preds$fit - 1.96 * gam_preds$se.fit,
+  upper_ci = gam_preds$fit + 1.96 * gam_preds$se.fit)
 
-factor_levels <- c("No transplant/No Surgery", "Transplant/No Surgery", "No transplant/Bypass", "Transplant/Bypass")
+factor_levels <- c("No transplant", "Transplant")
   
 ggplot(plot_data) +
-  facet_wrap(~ as.factor(age), ncol = 2, labeller = labeller(
-    `as.factor(age)` = function(x) paste("Age:", round(as.numeric(x), 2))
+  facet_grid(
+    as.factor(age) ~ surgery,
+    labeller = labeller(
+      `as.factor(age)` = function(x) paste("Age:", round(as.numeric(x), 2)),
+      surgery = function(x) ifelse(x == 1, "Bypass Surgery", "No bypass")
   )) +
   geom_line(
     aes(x = futime, y = fit,
-        color = interaction(
-          as.factor(transplant),
-          as.factor(surgery)
-          ),
-        linetype = as.factor(surgery))) +
-  geom_ribbon(aes(x = futime, ymin = lower_ci, ymax = upper_ci, fill = interaction(
-          as.factor(transplant),
-          as.factor(surgery)
-          )), alpha = 0.2) +
+        color = as.factor(transplant)
+          )) +
+  geom_ribbon(aes(x = futime, ymin = lower_ci, ymax = upper_ci, fill = as.factor(transplant),
+          ), alpha = 0.2) +
   theme_classic() +
   scale_linetype_manual(
     values = c(1, 2),
     name = "Surgery",
     labels = c("No bypass", "Bypass Surgery")
   ) +
-  scale_color_discrete(
+  scale_color_manual(
     name = "",
-    labels = factor_levels
+    labels = factor_levels,
+    values = colortheme2
     ) +
-  scale_fill_discrete(
+  scale_fill_manual(
     name = "",
-    labels = factor_levels
+    labels = factor_levels,
+    values = colortheme2
     ) +
   labs(title = "Predicted survival probabilities from GAM",
        x = "Time", y = "Survival probability") +
-  ylim(c(0, 1))
+  coord_cartesian(ylim = c(0, 1)) +
+  scale_y_continuous(breaks = c(0, 0.5, 1))
 ```
 
 
 ## Methods
 
-### Logistic Regression Model with varying coefficients via smoothing splines
-Let $Y_i$ be the binary outcome variable indicating whether patient $i$ survived or died.
-Denote $T_i$ as the transplant status of a patient.
+### Varying coefficients via smoothing splines
+
+We fit local linear logistic regression models for the binary outcome of survival as well a Cox proportional hazards model for time-to-event data.
+Let $Y_i$ be the binary outcome variable indicating whether patient $i$ survived or died and
+Denote $TRT_i$ as the transplant status of a patient.
 We model the log-odds of survival as a function of patient age and transplant status using a logistic regression varying-coefficient model:
 
 $$
-g(\mu_i) = \beta_0 + \theta_1(\text{age}_i)I(T_i = 1) + \theta_2(\text{age}_i)I(T_i = 0)
+g(\mu_i) = \beta_0 + \beta_{TRT} TRT_i + \theta_1(\text{age}_i)I(TRT_i = 1) + \theta_2(\text{age}_i)I(TRT_i = 0)
 $$
 
-where $\theta_i$ are smoothing splines of age for patients with and without transplants.
-
-
-### Local linear kernel smoothing for age-varying treament
+where $\theta_1(x)$ and $\theta_2(x)$ are smoothing splines of age for patients.
+We include treatment as a fixed effect as smoothing splines are centered so we need to include an intercept to retain the correct interpretation of the treatment effect.
+For the censored time-to-event data, we fit one linear Cox proportional hazards models, and two with varying-age smoothing spline coefficients for treatment and surgery.
 
 $$
 \begin{aligned}
-g(\mu_i) &= \theta_1(\text{age}_i) + \theta_2(\text{age}_i) T_i
+\lambda_{l}(t_i \mid X) &= \lambda_0(t_i) \exp(\beta_0 + \beta_1 \cdot \text{surgery}_i + \beta_2 \cdot \text{transplant}_i + \beta_3 \cdot \text{age}_i + \beta_4 \cdot (\text{surgery}_i \cdot \text{transplant}_i)) +\\
+    &\quad\quad \beta_5 \cdot (\text{surgery}_i \cdot \text{age}_i) + \beta_6 \cdot (\text{transplant}_i \cdot \text{age}_i) + \beta_7 \cdot (\text{surgery}_i \cdot \text{transplant}_i \cdot \text{age}_i) \\
+\lambda(t_i \mid X) &= \lambda_0(t_i) \exp(\beta_0 + \beta_1 \cdot \text{surgery}_i + \beta_2 \cdot \text{transplant}_i + \theta_{\text{surgery}}(\text{age}_i)\cdot \text{surgery}_i) \\
+\lambda_{s}(t_i \mid X) &= \lambda_0(t_i) \exp(\beta_0 + \beta_1 \cdot \text{surgery}_i + \beta_2 \cdot \text{transplant}_i + \\
+&\quad\quad \theta_{\text{surgery}}(\text{age}_i)\cdot \text{surgery}_i +  \theta_{\text{transplant}}(\text{age}_i) \cdot \text{transplant}_i)
 \end{aligned}
 $$
 
+All smoothing spline models were fit using B-splines with the mgcv [@wood2011] package in R.
 
+### Local linear kernel smoothing for age-varying treament
 
+We also fit a local linear logistic regression model for the binary outcome of survival using a kernel smoothing approach.
+Our setup is similar to the varying coefficient model but we use a kernel function to weight the contribution of each patient to the local linear fit.
 
-- Local linear fitting with varying coefficients (?)
-- Something like this chatGPT answer: https://chatgpt.com/c/674f5f0e-d974-8012-a5d5-e386fa864e14
-- Pg 41 of the notes good for this
+$$
+\begin{aligned}
+g(\mu_i) &= \theta_1(\text{age}_i) + \theta_2(\text{age}_i) TRT_i
+\end{aligned}
+$$
 
-### Smoothing splines
-- Age + transplant
-- 
+We use a local linear approximations $\theta_1(x) = \alpha_{11} + \alpha_{12} x$ and $\theta_2(x) = \alpha_{21} + \alpha_{22} x$ and solve the estimating equation
 
-## Methods
+TODO: Fix this, should be on the logit scale
+$$
+\sum_{i=1}^n K_h(\text{age}_i - x) \left[ Y_i - \theta_1(x) - \theta_2(x) T_i \right] = 0
+$$
+
+where $K_h$ is a kernel function with bandwidth $h$.
+TODO: Which kernel function did we use?
 
 ## Discussion
 
@@ -245,6 +340,15 @@ library(table1)
 heart2$survival <- as.factor(heart2$fustat == 0)
 levels(heart2$survival) <- c("Died", "Survived/Censored")
 table1(~ futime + age + surgery + transplant + mscore + reject + wait.time + mismatch + hla.a2 | survival, data = heart2)
+```
+
+### Cox proportional hazards models
+
+```{r coxph-aic-table}
+#| label: coxph-aic-table
+#| tbl-cap: "AIC and deviance for Cox proportional hazards models"
+kableExtra::kable(
+  cbind(model = c("linaer", "best", "oversmooth"), gam_table_aic[, c('aic', 'deviance')]), digits = 1)
 ```
 
 ```{r}
@@ -266,3 +370,14 @@ ggplot(., aes(x = age, y = futime)) +
 ```
 
 ### Exploratory plots
+
+### Heatmap of correlation matrix
+```{r}
+numeric_heart2 <- heart2[sapply(heart2, is.numeric)]
+spearman_cor <- cor(numeric_heart2, method = "spearman", use = "pairwise.complete.obs")
+corrplot::corrplot(
+  spearman_cor, diag = F, type = "upper",
+  method = "number",
+  order = "hclust", is.corr = TRUE,
+  )
+```

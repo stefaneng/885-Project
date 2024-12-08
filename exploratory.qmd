@@ -50,17 +50,6 @@ Methods:
 
 ## Exploratory
 
-### Heatmap of correlation matrix
-```{r}
-numeric_heart2 <- heart2[sapply(heart2, is.numeric)]
-spearman_cor <- cor(numeric_heart2, method = "spearman", use = "pairwise.complete.obs")
-corrplot::corrplot(
-  spearman_cor, diag = F, type = "upper",
-  method = "number",
-  order = "hclust", is.corr = TRUE,
-  )
-```
-
 ### Age vs futime by transplant/survived
 
 ```{r}
@@ -200,25 +189,40 @@ ggsurvplot(survfit(Surv(start, stop, event) ~ age_group + surgery, data = heart)
 ```
 
 ## Logistic Regression first
+- Including bypass surgery and transplant important in model
+- There is a quadratic effect age for the non-bypass surgery group. We model this with a smooth term that resembles a quadratic effect (TODO: Insert degrees of freedom)
+- We tested (TODO: Insert LRT) with a smooth term for age and transplant and found that a standard linear interaction is sufficient compared with a smooth term for age and transplant.
+- The final model for the logistic regression includes a linear interaction between age and transplant and age-varying bypass surgery term.
+- Note that the standard errors (Bayesian?) are large and it is difficult to make strong conclusions about the age-varying effect of transplant and bypass surgery.
+
+
 ```{r}
 pred_data <- expand.grid(
   age = seq(min(heart$age), max(heart$age), length.out = 100),
   transplant = unique(heart$transplant),
+  surgery = unique(heart$surgery),
   transplant_fct = as.factor(c('No transplant', 'Transplant')))
 
 #pred_data$surgery_transplant <- interaction(pred_data$surgery, pred_data$transplant)
 #heart$surgery_transplant <- interaction(heart$surgery, heart$transplant)
-log_model <- gam(event ~ s(age, by = transplant, bs = "bs"), data = heart2, family = binomial)
-log_preds <- predict(log_model, newdata = pred_data, type = "response", se.fit = TRUE)
+log_model <- gam(event ~ transplant + s(age, by = transplant, bs = "bs"), data = heart2, family = binomial, method = "REML")
+log_model2 <- gam(event ~ transplant + surgery + s(age, by = transplant, bs = "bs") + s(age, by = surgery, bs = "bs"), data = heart2, family = binomial, method = "REML")
+# TODO: Do the LRT with ML but final model with REML
+log_model3 <- gam(event ~ surgery + age*transplant + s(age, by = surgery, bs = "bs"), data = heart2, family = binomial, method = "REML")
+
+gratia::draw(log_model3)
+# anova(log_model2, log_model3, test = "LRT")
+
+log_preds <- predict(log_model3, newdata = pred_data, type = "response", se.fit = TRUE)
 plot_data <- cbind(
   pred_data, prob = log_preds$fit, lower_ci = log_preds$fit - 1.96 * log_preds$se.fit, upper_ci = log_preds$fit + 1.96 * log_preds$se.fit)
 ggplot(plot_data) +
-  geom_line(aes(x = age, y = prob, color = transplant)) +
-  geom_ribbon(aes(x = age, ymin = lower_ci, ymax = upper_ci, fill = transplant), alpha = 0.2) +
+  geom_line(aes(x = age, y = prob, color = interaction(transplant, surgery))) +
+  geom_ribbon(aes(x = age, ymin = lower_ci, ymax = upper_ci, fill = interaction(transplant, surgery)), alpha = 0.2) +
   labs(title = "Predicted probability of death", x = "Age", y = "Probability of death") +
-  theme_classic() +
-  ylim(c(0,1))
+  theme_classic()
 ```
+
 
 ## Survival GAM
 
