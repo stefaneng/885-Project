@@ -23,9 +23,6 @@ include-in-header:
     \usepackage{setspace}
     \usepackage{lipsum}
     \doublespacing
-    \linespread{2} % Ensures 25 lines per page
-    \setlength{\parindent}{0pt}
-    \setlength{\parskip}{1em}
 abstract: |
   This is the abstract.
 ---
@@ -57,9 +54,15 @@ transplant_factor_levels <- c("No transplant", "Transplant")
 
 rm(heart)
 heart <- heart2
+heart$y <- as.factor(1 - heart$event)
 
 colortheme2 <- c("#FDB44E", "skyblue")
-theme_set(theme_minimal())
+theme_set(theme_classic())
+
+cv_results_local_kernel <- readRDS("cv_results_local_kernel.rds")
+cv_results_partial_local_kernel <- readRDS("cv_results_partial_local_kernel.rds")
+
+cv_bandwidth <- cv_results_partial_local_kernel$bandwidth[which.min(cv_results_partial_local_kernel$deviance)]
 ```
 
 ## Introduction
@@ -83,14 +86,14 @@ We will use both local linear kernel methods and smoothing splines [@wood2011] t
 
 ## Results
 
-There are a total of `r sum(heart$fustat == 0)` deaths and `r sum(heart$fustat == 1)` censored/survival observations in the dataset (`r label_percent()(mean(heart$fustat))`).
+There are a total of `r sum(heart$fustat == 1)` deaths and `r sum(heart$fustat == 0)` censored/survival observations in the dataset (`r label_percent()(mean(heart$fustat))`).
 See @tbl-1 in the appendix for a summary of the dataset.
 In an exploratory analysis, we observe a potential non-linear interaction between age and both transplant status and previous bypass surgery on follow-up time (@fig-age-transplant-interaction).
 Those that survived and did received a transplant appear to have a different relationship between age and follow-up time compared to those that did not receive a transplant.
 The univariate smooth spline fit seems to indicates a quadratic relationship in which follow-up time is increased for median age patients for the survived and transplant group.
-Visually, there is a similar pattern for those patients that died and received transplant but the penalized smoothing spline fit is essentially flat.
+Visually, there is a similar pattern for those patients that died and received transplant but the penalized B-spline fit is essentially flat.
 We see a similar pattern for the interaction between age and bypass surgery on follow-up time in @fig-age-surgery-interaction.
-We also explored the relationship between age and follow-up time for those that received a transplant by pre-transplant bypass surgery status but did not observe any clear patterns See @fig-surgery-transplant-interaction in the appendix.
+We also explored the relationship between age and follow-up time for those that received a transplant by pre-transplant bypass surgery status but did not observe any clear patterns (see @fig-surgery-transplant-interaction in the Appendix).
 These results are consistent with the original work done in [@crowley1977] in which they did a stratified analysis on age groups $[8,40), [40,50), [50,65)$ which suggested a quadratic effect of age though this was not statistically significant.
 
 
@@ -232,12 +235,19 @@ ggplot(plot_data_logit) +
 
 ### Logistic regression local linear kernel model
 
-We also fit a local linear logistic regression model to the binary outcome of survival to investigate the relationship between age, transplant status, and survival.
+We also fit a local linear kernel logistic regression model to the binary outcome of survival to investigate the relationship between age, transplant status, and survival.
+The first model we fit is a model that is local for the age-varying transplant, and age-varying bypass surgery.
 We used a Gaussian kernel function to weight the contribution of each patient to the local linear fit and used 100 target ages between the minimum and maximum age in the dataset.
 For bandwidths of 5, 15, and 25, we fit the local linear logistic regression model and plot the results in @fig-local-kernel-glm.
-Our leave-out-out cross-validations results indicate that the optimal bandwidth increases monotonically  (See @fig-local-kernel-cv-results in Appendix) but this is not necessarily only due to bandwidth selection.
-The results show that the predicted survival probabilities are sensitive to the bandwidth and that the age-varying bypass surgery term appears to have a different relationship with survival than the age-varying transplant term.
+Our leave-out-out cross-validations results indicate that the optimal bandwidth increases monotonically (See @fig-partial-local-kernel-cv-results) but this is not necessarily only due to bandwidth selection.
+The predictions show that the predicted survival probabilities are sensitive to the bandwidth and that the age-varying bypass surgery term appears to have a different relationship with survival than the age-varying transplant term.
 The transplant age-varying term quickly appears linear but the bypass surgery term has a more complex relationship with survival.
+Based on the results from the smoothing spline, it seems like a lower bandwidth would be more appropriate for the age-varying bypass surgery term and high bandwidth (global logistic regression) is better for the age-varying transplant term.
+
+To remedy this, we fit what we call a partially local kernel logistic regression model in which we first fit a global logistic regression model with age and transplant terms and then fit a local linear kernel model on the Pearson residuals.
+As we can see in @fig-partial-local-kernel-cv-results, the partial local model fits better, based on leave-one-out cross-validation, than the local kernel model.
+The optimal bandwidth of `r cv_bandwidth` is shown in @fig-partial-local-kernel-glm with $\pm 5$ bandwidth to illustrate how the model fits for different bandwidth.
+This model also corresponds better to the GAM models in which the age-varying bypass surgery term is non-linear and the transplant term is linear.
 
 ```{r local-kernel-glm}
 #| label: fig-local-kernel-glm
@@ -246,7 +256,7 @@ The transplant age-varying term quickly appears linear but the bypass surgery te
 #| fig-cap: "Predicted survival probabilities from local linear logistic kernel regression for varying bandwidths. "
 source("local_kernel_glm.R")
 
-plot_bandwidth <- c(5,10,15,20)
+plot_bandwidth <- c(5,10,20,30)
 pred_results <- bind_rows(lapply(plot_bandwidth, function(b) {
   # Compute coefficients for each target age
   results <- fit_local_logistic(heart, target_ages, b)
@@ -272,6 +282,64 @@ ggplot(pred_results) +
       y = pred,
       color = factor(transplant),
       linetype = factor(surgery))) +
+  scale_linetype_manual(
+    name = "",
+    labels = c("No Surgery", "Surgery"),
+    values = c("solid", "dashed")
+  ) +  
+  scale_color_manual(
+    name = "",
+    labels = transplant_factor_levels,
+    values = colortheme2
+  ) +
+  scale_fill_manual(
+    name = "",
+    labels = transplant_factor_levels,
+    values = colortheme2
+  ) +
+  ylab("Probability of survival") +
+  xlab("Age")
+```
+
+```{r partial-local-kernel-glm}
+#| label: fig-partial-local-kernel-glm
+#| fig-height: 4
+#| fig-width: 8
+#| fig-cap: "Predicted survival probabilities from partial local linear logistic kernel regression for bandwidths around optimal bandwidth."
+source("local_global_kernel_glm.R")
+
+# Parameters
+pred_newdata <- expand.grid(
+  age = target_ages,
+  transplant = c(0, 1),
+  surgery = c(0, 1)
+)
+  
+# theta(age) and theta(age) * surgery estimate
+plot_bandwidth <- c(cv_bandwidth - 5, cv_bandwidth, cv_bandwidth + 5)
+pred_results <- bind_rows(lapply(plot_bandwidth, function(b) {
+  theta_df <- fit_local_linear(data, target_ages, b)
+  
+  pred_newdata$pred <- predict_partial_local_logistic(
+    global_fit, theta_df, newdata = pred_newdata, type = "response")
+  pred_newdata$bandwidth <- b
+  pred_newdata
+}))
+
+ggplot(
+  pred_results,
+  aes(x = age, y = pred,
+      color = factor(transplant),
+      linetype = factor(surgery))) +
+  facet_wrap(~ bandwidth,
+             labeller = label_both) +
+  geom_line() +
+  labs(title = "Predicted survival for partial local linear logistic regression", y = "Probability of survival", x = "Age") +
+  scale_linetype_manual(
+    name = "",
+    labels = c("No Surgery", "Surgery"),
+    values = c("solid", "dashed")
+  ) +
   scale_color_manual(
     name = "",
     labels = transplant_factor_levels,
@@ -284,7 +352,34 @@ ggplot(pred_results) +
   )
 ```
 
-Based on the results from the smoothing spline, it seems like a lower bandwidth would be more appropriate for the age-varying bypass surgery term and high bandwidth (global logistic regression) is better for the age-varying transplant term.
+```{r partial-local-kernel-glm-cv}
+#| label: fig-partial-local-kernel-cv-results
+#| fig-height: 3
+#| fig-width: 6
+#| fig-cap: "Cross validation results for partial local linear kernel logistic regression model with Gaussian kernel. The minimum deviance bandwidth for the partial local kernel model is 13.5."
+
+bind_rows(
+  bind_cols(cv_results_local_kernel, model = "Local kernel"),
+  bind_cols(cv_results_partial_local_kernel, model = "Partial local kernel")
+  ) %>%
+ggplot(., aes(x = bandwidth, y = deviance)) +
+  facet_wrap(~ model, scales = "free") +
+  geom_line() +
+  geom_point() +
+  theme_classic() +
+  geom_vline(
+    data = . %>% filter(deviance == min(deviance)),
+    aes(xintercept = bandwidth),
+    linetype = "dashed",
+    color = "grey"
+  ) +
+  scale_x_continuous(
+    breaks = c(0, 10, cv_bandwidth, 20, 30),
+    labels = c(0, 10, cv_bandwidth, 20, 30),
+    ) +  
+  labs(title = "Leave-one-out cross-validation error",
+       x = "Bandwidth", y = "Cross-validation deviance")
+```
 
 ### Cox Proportional Hazard Age-Varying Models
 
@@ -302,7 +397,7 @@ In the time-to-event case, we found that the best model was the age-varying tran
 To assess how the model fits the data we predict the survival time by transplant status and bypass surgery status at ages 39.7, 47.8, 53.0 which correspond to quantiles of 20%, 50% and 80% as shown in @fig-gam-survival-surgery.
 Though the AIC indicates that the smoothing splines should be included in the model, the age-varying transplant splines are almost linear as shown in @fig-gam-cox-spline-partial in the appendix, as well as the empirical degrees of freedom of approximately 1.
 The parametric coefficients have surgery hazard ratio 0.463 (95% CI: 0.228, 0.938), and transplant hazard ratio 0.734 (95% CI: 0.435, 1.24).
-Since transplant is included as a smooth term we must interpret it in combination with the age-varying affect term.
+Since transplant is included as a smooth term we must interpret it in combination with the age-varying effect as shown in @fig-gam-survival-surgery.
 
 ```{r}
 #| label: fig-gam-survival-surgery
@@ -440,19 +535,36 @@ $$
 
 where $\hat{p}_i$ is the predicted probability of survival for patient $i$.
 
+### Partially local linear kernel smoothing for age-varying treatment
+
+Based on the results from the local linear kernel model, we fit what we call a partially local linear kernel model.
+This model first fits a global logistic regression model with age and transplant terms and then fits a local linear kernel model on the residuals.
+The global model is
+
+$$
+g(\mu_i) = \beta_0 + \beta_1 \text{transplant}_i + \beta_2 \text{age}_i
+$$
+
+Then, let $r_i$ be the Pearson residuals from the global model, $r_i = \frac{y_i - \hat{\mu}_i}{\sqrt{\text{Var}(y_i)}}$.
+We fit a local linear model to the Pearson residuals
+
+$$
+r_i = \theta_1(\text{age}_i) + \theta_2(\text{age}_i) \text{surgery}_i
+$$
+
+where $\theta_1(x) = \alpha_{11} + \alpha_{12} x$ and $\theta_2(x) = \alpha_{21} + \alpha_{22} x$.
+This allows us to have a global term for transplant and age and a local term for bypass surgery.
 
 ## Discussion
 
-Our analysis of the Stanford Heart Transplant dataset suggests that there is potentially a age-varying effect for transplant.
+Our analysis of the Stanford Heart Transplant dataset suggests that there is a age-varying effect for prior bypass surgery and potentially a age-varying effect for transplant.
 Since this dataset has a relatively small sample size it is difficult to include more covariates due to a lack of power.
 Another additional analysis that could be performed would be to perform the Cox proportional hazards assumption using local linear estimation for example using a method similar to [@cai2003].
-Our local linear logistic regression model could also be improved by modeling the age-varying terms separately.
-Based on the results from the smoothing spline, it seems like a lower bandwidth would be more appropriate for the age-varying bypass surgery term and high bandwidth (global logistic regression) is better for the age-varying transplant term.
-This could be done via an alternative model with a global intercept term for transplant and a local linear kernel for bypass surgery.
 Additionally, there are many potentially useful covariates to include for each patient that are both fixed and time-varying coefficients.
 For more complex models and covariates, we would need a larger dataset.
 Some potential datasets would be the Scientific Registry of Transplant Recipients [@srtr].
 
+\newpage
 
 ## References
 
@@ -549,7 +661,7 @@ kableExtra::kable(
 #| label: fig-surgery-transplant-interaction
 #| fig-height: 5
 #| fig-width: 8
-#| fig-cap: "TODO"
+#| fig-cap: "Surgery and transplant appear to have a non-linear interaction with age. Middle aged patients that did not received surgery and survived tended to have longer follow up time than those at extreme ends of age."
 
 heart2 %>% 
   filter(transplant == 1) %>%
@@ -559,23 +671,7 @@ ggplot(., aes(x = age, y = futime)) +
              labeller = label_both) +
   geom_point() +
   geom_smooth(method = "gam", formula = y ~ s(x, bs = "bs")) +
-  theme_minimal() +
   ylab("Follow-up time") +
   xlab("Age") +
   ylim(c(0, max(heart2$futime) + 10))
-```
-
-```{r local-kernel-glm-cv-results}
-#| label: fig-local-kernel-cv-results
-#| fig-height: 3
-#| fig-width: 6
-#| fig-cap: "Cross validation results for local linear kernel logistic regression model with Gaussian kernel. The CV results indicate that a global logistic regression fits best given the current model formulation."
-
-cv_results <- readRDS("cv_results.rds")
-ggplot(cv_results, aes(x = bandwidth, y = deviance)) +
-  geom_line() +
-  geom_point() +
-  theme_classic() +
-  labs(title = "Leave-one-out cross-validation error for local linear logistic regression",
-       x = "Bandwidth", y = "Cross-validation deviance")
 ```

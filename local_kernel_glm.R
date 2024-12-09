@@ -1,4 +1,3 @@
-heart$y <- as.factor(1 - heart$event)
 data <- heart
 bandwidth <- seq(5, max(heart$age), by = 1)
 target_ages <- seq(min(heart$age), max(heart$age), length.out = 100)
@@ -16,9 +15,9 @@ predict_local_logistic <- function(localfit, newdata, type = c("link", "response
   a <- newdata[, "age"]
   X <- newdata[, colnames(newdata) != "age"]
 
-  intercept_func <- approxfun(target_ages, localfit[,1])
-  transplant_func <- approxfun(target_ages, localfit[,2])
-  surgery_func <- approxfun(target_ages, localfit[,3])
+  # intercept_func <- approxfun(target_ages, localfit[,1])
+  # transplant_func <- approxfun(target_ages, localfit[,2])
+  # surgery_func <- approxfun(target_ages, localfit[,3])
 
   transplant_val <- X[, 1]
   if (is.factor(transplant_val)) {
@@ -29,7 +28,7 @@ predict_local_logistic <- function(localfit, newdata, type = c("link", "response
     surgery_val <- as.numeric(as.character(X[, 2]))
   }
 
-  res <- intercept_func(a) + transplant_val * transplant_func(a) + surgery_val * surgery_func(a)
+  res <- localfit[,1] + transplant_val *localfit[,2] + surgery_val * localfit[,3]
   if (type == "link") {
     return(res)
   } else if (type == "response") {
@@ -40,7 +39,7 @@ predict_local_logistic <- function(localfit, newdata, type = c("link", "response
 }
 
 # Local linear logistic regression function
-fit_local_logistic <- function(data, target_age, bandwidth) {
+fit_local_logistic <- function(data, target_ages, bandwidth) {
   t(sapply(target_ages, function(age) {
     weights <- gaussian_kernel(data$age, age, bandwidth)
     data$age_centered <- data$age - age
@@ -56,16 +55,18 @@ fit_local_logistic <- function(data, target_age, bandwidth) {
 }
 
 if (FALSE) {
+  bandwidth <- seq(5, 30, by = 0.5)
   cv_results <- lapply(bandwidth, function(b) {
     cat("Start bandwidth ", b, "\n")
     mean(sapply(seq_len(nrow(heart)), function(i) {
       # Leave-one-out cross-validation
       yi <- heart$age[i]
       local_fit <- fit_local_logistic(heart[-i,], yi, b)
-      p_hat <- predict_local_logistic(local_fit, heart[i, c("age", "transplant", "surgery")], type = "response")
+      p_hat <- predict_local_logistic(
+        local_fit, heart[i, c("age", "transplant", "surgery")], type = "response")
       - 2 * sum(yi * log(p_hat) + (1 - yi) * log(1 - p_hat))
     }))
   })
 
-  saveRDS(data.frame(bandwidth = bandwidth, deviance = unlist(cv_results)), "cv_results.rds")
+  saveRDS(data.frame(bandwidth = bandwidth, deviance = unlist(cv_results)), "cv_results_local_kernel.rds")
 }
