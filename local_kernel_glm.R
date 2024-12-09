@@ -1,18 +1,8 @@
-# # Simulate a dataset
-# set.seed(123)
-# n <- 200
-# data <- data.frame(
-#   age = runif(n, 20, 80),
-#   TRT_0 = rbinom(n, 1, 0.5),
-#   TRT_1 = rbinom(n, 1, 0.5),
-#   y = rbinom(n, 1, 0.5)
-# )
+# TODO:
+# Confidence intervals (bootstrap?)
+# CV
 
-#library(survival)
-#data(heart)
-#heart$TRT <- heart$transplant
 heart$y <- as.factor(1 - heart$event)
-#heart$age <- heart$age - 48
 data <- heart
 
 gaussian_kernel <- function(x, center, bandwidth) {
@@ -20,40 +10,54 @@ gaussian_kernel <- function(x, center, bandwidth) {
 }
 
 # Local linear logistic regression function
-local_logistic <- function(data, target_age, bandwidth) {
-  # Compute kernel weights
+fit_local_logistic <- function(data, target_age, bandwidth) {
   weights <- gaussian_kernel(data$age, target_age, bandwidth)
-
-  # Center age around target_age for local linear terms
   data$age_centered <- data$age - target_age
 
-  #subset_data <- data[abs(data$age_centered) < bandwidth, ]
-
-  # Fit logistic regression with weights
+    # Fit logistic regression with weights
   fit <- glm(y ~ 1 + transplant * age_centered + surgery * age_centered,
              family = quasibinomial(link = "logit"),
              data = data,
              weights = weights)
   # Extract coefficients
-  coef(fit)
+  coef(fit)[c("(Intercept)", "transplant1", "surgery1")]
 }
 
 # Define target ages and bandwidth
-target_ages <- seq(20, 80, length.out = 100)
+target_ages <- seq(min(heart$age), max(heart$age), length.out = 100)
 bandwidth <- 5
 
 # Compute coefficients for each target age
-results <- sapply(target_ages, function(age) {
-  local_logistic(data, target_age = age, bandwidth = bandwidth)
-})
+results <- t(sapply(target_ages, function(age) {
+  fit_local_logistic(data, target_age = age, bandwidth = bandwidth)
+}))
 
-# Transpose results for easier handling
-results <- t(results)
-#colnames(results) <- c("Intercept", "TRT_0", "Age_Centered_TR0", "TRT_1", "Age_Centered_TR1")
+predict_local_logistic <- function(newdata, type = c("link", "response")) {
+  type <- match.arg(type)
+  a <- newdata[, "age"]
+  X <- newdata[, colnames(newdata) != "age"]
 
-ilogit <- function(x) exp(x) / (1 + exp(x))
-plot(target_ages, ilogit(rowSums(results[, 1:3])), col = "black", type = "l", ylim = c(0, 1))
-lines(target_ages, ilogit(rowSums(results[, 1:2])), col = "blue", type = "l")
-lines(target_ages, ilogit(rowSums(results[, c(1, 3)])), col = "red", type = "l")
+  intercept_func <- approxfun(target_ages, results[,1])
+  transplant_func <- approxfun(target_ages, results[,2])
+  surgery_func <- approxfun(target_ages, results[,3])
 
-#legend("bottomleft", legend = c("Transplant", "No transplant"), col = c("black", "red"), lty = 1)
+  res <- intercept_func(a) + X[,1] * transplant_func(a) + X[,2] * surgery_func(a)
+  if (type == "link") {
+    return(res)
+  } else if (type == "response") {
+    return(exp(res) / (1 + exp(res)))
+  } else {
+    stop("Invalid type")
+  }
+}
+
+pred_newdata <- expand.grid(
+  age = target_ages,
+  transplant = c(0, 1),
+  surgery = c(0, 1)
+)
+
+pred_newdata$pred <- predict_local_logistic(pred_newdata, type = "response")
+
+ggplot(pred_newdata) +
+  geom_line(aes(x = age, y = pred, color = factor(transplant), linetype = factor(surgery)))

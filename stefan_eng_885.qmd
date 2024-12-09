@@ -135,7 +135,7 @@ ggplot(heart2, aes(x = age, y = futime)) +
 ### Logistic regression age-varying models
 
 We fit a logistic regression model to the binary outcome of survival to investigate the relationship between age, transplant status, and survival.
-From the exploratory analysis, we fit four generalized linear additive models models:
+From the exploratory analysis, we fit four logistic additive models models:
 
 1. Three-way interaction between bypass surgery, transplant, and age with no smooth terms
 2. Smooth age-varying interaction between bypass surgery and age
