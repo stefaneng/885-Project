@@ -23,9 +23,17 @@ include-in-header:
     \usepackage{setspace}
     \usepackage{lipsum}
     \doublespacing
+    \linespread{2} % Enforce 25 lines per page
 abstract: |
-  This is the abstract.
+  We investigate the relationship between age, heart transplantation, and survival outcomes in the Stanford Heart Transplant dataset using spline and kernel varying-coefficient models for both binary survival outcome and time-to-event outcomes.
+  We find some evidence for age-varying transplant term and a stronger age-varying bypass surgery term.
+  For the kernel based models, we find that a combination of global and local kernel models fits the data better than a purely local kernel model.
+  All models indicate that patients around median age have better outcomes than those that are younger or older which is consistent with the original analysis.
+github: https://github.com/stefaneng/885-Project
 ---
+
+\setlength{\abovedisplayskip}{1pt}
+\setlength{\belowdisplayskip}{1pt}
 
 ```{r setup}
 #| echo: false
@@ -68,21 +76,20 @@ cv_bandwidth <- cv_results_partial_local_kernel$bandwidth[which.min(cv_results_p
 ## Introduction
 
 Heart transplantation is a critical intervention for patients with end-stage heart failure, offering a potential extension of life and potential for improved quality of life.
-The decision for a doctor to advise a patient to undergo a heart transplant is a complex one as it may negatively influence patient survival as well.
-This is influenced by various factors, including patient age and clinical status.
-Understanding the impact of heart transplantation on patient survival is essential for optimizing treatment strategies and resource allocation.
+The success of a heart transplant depends on factors including patient age and clinical status.
+Understanding the impact of heart transplantation on patient survival could impact which patients are selected for transplantation and how they are managed post-transplant.
 
-The Stanford Heart Transplant dataset [@crowley1977] provides a valuable resource for studying survival outcomes in patients awaiting or undergoing heart transplantation.
+The Stanford Heart Transplant study [@crowley1977] provides a valuable resource for studying survival outcomes in patients awaiting or undergoing heart transplantation.
 This dataset has been analyzed extensively in the literature, with researchers using it to develop and validate survival models, including Cox proportional hazards models.
-Derived from a cohort at Stanford University, this dataset includes detailed time-to-event data, allowing for a nuanced analysis of survival probabilities, the effects of treatment, and the role of patient characteristics over time.
-
+This dataset includes information on patient age, transplant status, and survival outcomes, making it well-suited for investigating the relationship between age and heart transplantation on survival outcomes.
 In this study we use the original 103 patient Stanford Heart Transplant dataset to investigate the survival effects of heart transplantation while accounting for patient age and time-dependent factors.
-This study has a follow up 173 patients that adds on additional controls.
+This study has a follow up 173 patients that adds on additional controls, specifically those that did not receive a transplant and did not have bypass surgery and survived during the follow-up period.
 We use this extension for the Cox proportional hazards model to ensure that we have sufficient patients for each combination of transplant and bypass surgery status.
-Our investigation is largely an exploratory analysis which could form the basis for future research on heart transplantation survival.
-Specifically, we explored the non-linear interaction between age and transplant for survival outcomes for both logistic and survival models using varying-coefficient models.
+
+We model the non-linear interaction between age and transplant for survival outcomes for both logistic and survival models using varying-coefficient models.
 Varying-coefficient models are a flexible class of models that allow for the estimation of non-linear relationships between covariates and outcomes [@hastie1993].
-We will use both local linear kernel methods and smoothing splines [@wood2011] to model the time-varying coefficient model for binary survival outcome ane time-to-event data.
+We will use both local linear kernel methods and smoothing splines [@wood2011] to model the time-varying coefficient model for binary survival outcome and time-to-event data.
+Our investigation is largely an exploratory analysis which could form the basis for future research on heart transplantation survival.
 
 ## Results
 
@@ -95,7 +102,6 @@ Visually, there is a similar pattern for those patients that died and received t
 We see a similar pattern for the interaction between age and bypass surgery on follow-up time in @fig-age-surgery-interaction.
 We also explored the relationship between age and follow-up time for those that received a transplant by pre-transplant bypass surgery status but did not observe any clear patterns (see @fig-surgery-transplant-interaction in the Appendix).
 These results are consistent with the original work done in [@crowley1977] in which they did a stratified analysis on age groups $[8,40), [40,50), [50,65)$ which suggested a quadratic effect of age though this was not statistically significant.
-
 
 ```{r age-transplant-interaction}
 #| label: fig-age-transplant-interaction
@@ -149,12 +155,12 @@ From the exploratory analysis, we fit four logistic additive models models:
 
 We note that the sample size for the dataset is small and the models are more exploratory in nature as the power is quite low.
 We compare the models using the Akaike Information Criterion (AIC) and deviance in @tbl-logit-aic-table in the appendix.
-The best model selected by AIC has a smooth age-varying interaction between bypass surgery and a constant term for transplant status.
+The best model selected by AIC is model (2), which has a smooth age-varying interaction between bypass surgery and a constant term for transplant status.
 In @fig-gam-spline-glm, we plot the predicted survival probabilities from the best model along the range of ages for patients with and without bypass surgery and transplant status.
-We also include the results of the age-varying transplant model as well as the AIC is within 1 point of the best model.
+We also include the results of the age-varying transplant model as the AIC is within 1 point of the best model.
 The model has an age-varying coefficient for bypass surgery which has substantial non-linear components (empirical degrees of freedom = 3.8, p = 0.0167) for the non-surgery group.
 The bypass surgery age-varying term is approximately linear (edf = 1.04, p-value = 0.187).
-The odds transplant fixed effect has an odds ratio of 0.20 (95% CI: 0.05, 0.75), which indicates a 5 times lower odds of survival for those that received a transplant.
+The odds ratio for transplant effect is 0.20 (95% CI: 0.05, 0.75), which indicates a 5 times lower odds of survival for those that received a transplant.
 The odds ratio for prior bypass is 0.33 (95% CI: 0.083, 1.30).
 Since we have an age-varying coefficient for bypass surgery, the odds ratio for bypass surgery is not interpretable in the usual sense and we need to consider the interaction with age.
 For those that received bypass surgery, the survival probability appears lower than those that did not receive bypass surgery but the confidence intervals are quite wide as there are few patients far away from the median age.
@@ -212,11 +218,17 @@ ggplot(plot_data_logit) +
 ) +
   geom_line(
     aes(x = age, y = fit,
-        color = as.factor(transplant)
+        color = as.factor(transplant),
+        linetype = as.factor(surgery)
           )) +
   geom_ribbon(aes(x = age, ymin = lower_ci, ymax = upper_ci, fill = as.factor(transplant),
           ), alpha = 0.2) +
   theme_classic() +
+  scale_linetype_manual(
+    name = "",
+    labels = c("No Surgery", "Surgery"),
+    values = c("solid", "dashed")
+  ) +
   scale_color_manual(
     name = "",
     labels = transplant_factor_levels,
@@ -237,16 +249,16 @@ ggplot(plot_data_logit) +
 
 We also fit a local linear kernel logistic regression model to the binary outcome of survival to investigate the relationship between age, transplant status, and survival.
 The first model we fit is a model that is local for the age-varying transplant, and age-varying bypass surgery.
-We used a Gaussian kernel function to weight the contribution of each patient to the local linear fit and used 100 target ages between the minimum and maximum age in the dataset.
+We used a Gaussian kernel function and used 100 target ages between the minimum and maximum age in the dataset.
 For bandwidths of 5, 15, and 25, we fit the local linear logistic regression model and plot the results in @fig-local-kernel-glm.
-Our leave-out-out cross-validations results indicate that the optimal bandwidth increases monotonically (See @fig-partial-local-kernel-cv-results) but this is not necessarily only due to bandwidth selection.
+Our leave-out-out cross-validations results indicate that the optimal bandwidth increases monotonically (See @fig-partial-local-kernel-cv-results) but we do not believe this is simply due to bandwidth selection.
 The predictions show that the predicted survival probabilities are sensitive to the bandwidth and that the age-varying bypass surgery term appears to have a different relationship with survival than the age-varying transplant term.
 The transplant age-varying term quickly appears linear but the bypass surgery term has a more complex relationship with survival.
 Based on the results from the smoothing spline, it seems like a lower bandwidth would be more appropriate for the age-varying bypass surgery term and high bandwidth (global logistic regression) is better for the age-varying transplant term.
 
-To remedy this, we fit what we call a partially local kernel logistic regression model in which we first fit a global logistic regression model with age and transplant terms and then fit a local linear kernel model on the Pearson residuals.
-As we can see in @fig-partial-local-kernel-cv-results, the partial local model fits better, based on leave-one-out cross-validation, than the local kernel model.
-The optimal bandwidth of `r cv_bandwidth` is shown in @fig-partial-local-kernel-glm with $\pm 5$ bandwidth to illustrate how the model fits for different bandwidth.
+To remedy this, we fit what we call a partially local kernel logistic regression model in which we first fit a global logistic regression model with age and transplant terms and then fit a local linear kernel model on the Pearson residuals from the global logistic regression model.
+As we can see in @fig-partial-local-kernel-cv-results, the partial local model fits better, based on leave-one-out cross-validation, then the local kernel model.
+The optimal bandwidth of `r cv_bandwidth` is shown in @fig-partial-local-kernel-glm with $\pm 3$ bandwidth to illustrate how the model fits for different bandwidth.
 This model also corresponds better to the GAM models in which the age-varying bypass surgery term is non-linear and the transplant term is linear.
 
 ```{r local-kernel-glm}
@@ -315,8 +327,7 @@ pred_newdata <- expand.grid(
   surgery = c(0, 1)
 )
   
-# theta(age) and theta(age) * surgery estimate
-plot_bandwidth <- c(cv_bandwidth - 5, cv_bandwidth, cv_bandwidth + 5)
+plot_bandwidth <- c(cv_bandwidth - 3, cv_bandwidth, cv_bandwidth + 3)
 pred_results <- bind_rows(lapply(plot_bandwidth, function(b) {
   theta_df <- fit_local_linear(data, target_ages, b)
   
@@ -356,7 +367,7 @@ ggplot(
 #| label: fig-partial-local-kernel-cv-results
 #| fig-height: 3
 #| fig-width: 6
-#| fig-cap: "Cross validation results for partial local linear kernel logistic regression model with Gaussian kernel. The minimum deviance bandwidth for the partial local kernel model is 13.5."
+#| fig-cap: "Cross validation results for partial local linear kernel logistic regression model with Gaussian kernel. The minimum deviance bandwidth for the partial local kernel model is 11.5."
 
 bind_rows(
   bind_cols(cv_results_local_kernel, model = "Local kernel"),
@@ -373,10 +384,6 @@ ggplot(., aes(x = bandwidth, y = deviance)) +
     linetype = "dashed",
     color = "grey"
   ) +
-  scale_x_continuous(
-    breaks = c(0, 10, cv_bandwidth, 20, 30),
-    labels = c(0, 10, cv_bandwidth, 20, 30),
-    ) +  
   labs(title = "Leave-one-out cross-validation error",
        x = "Bandwidth", y = "Cross-validation deviance")
 ```
@@ -386,7 +393,7 @@ ggplot(., aes(x = bandwidth, y = deviance)) +
 We fit Cox proportional hazards models with age-varying coefficients to the time-to-event data to investigate the relationship between age, transplant status, and survival.
 For these models we used the extended heart transplant dataset with 172 patients [@therneau2024].
 This adds on additional controls such that there are sufficient patients for each combination of transplant and bypass surgery status.
-Based on our exploratory analysis, and for agreement with the logstic regression models, we fit the following three models
+Based on our exploratory analysis, and for agreement with the logistic regression models, we fit the following three models
 
 1. Three-way interaction between bypass surgery, transplant, and age (no splines).
 2. A model with a smooth age-varying bypass surgery effect.
@@ -511,20 +518,28 @@ Our setup is similar to the varying coefficient model but we use a kernel functi
 
 $$
 \begin{aligned}
-g(\mu_i) &= \theta_1(\text{age}_i) + \theta_2(\text{age}_i) \text{transplant}_i + \theta_3(\text{age}_i) \text{surgery}_i
+\text{logit}(\mu_i) &= \theta_1(\text{age}_i) + \theta_2(\text{age}_i) \text{transplant}_i + \theta_3(\text{age}_i) \text{surgery}_i
 \end{aligned}
 $$
 
-We use a local linear approximations $\theta_1(x) = \alpha_{11} + \alpha_{12} x$, $\theta_2(x) = \alpha_{21} + \alpha_{22} x$, and $\theta_3(x) = \alpha_{31} + \alpha_{32} x$ and solve the estimating equation
+We use a local linear approximations around fixed neighborhood of fixed age points $a_1, \ldots, a_m$.
+That is, in the neighborhood of $a$ we approximate $\theta_1(a) + \theta_2(a) \text{transplant}_i + \theta_3(a) \text{surgery}_i$ as a linear interactions between age-transplant and age-surgery.
+
+$$
+A = \alpha_{0} + \alpha_{transplant} \text{transplant}_i + \alpha_{surgery} \text{surgery}_i + \alpha_{1} (\text{age}_i - a) \text{transplant}_i + \alpha_{2} (\text{age}_i - a) \text{surgery}_i
+$$
+
+where we estimate $\hat{\theta}_1(a) = \hat{\alpha}_{0}$, $\hat{\theta}_2(a) = \hat{\alpha}_{transplant}$, and $\hat{\theta}_3(a) = \hat{\alpha}_{surgery}$ using the estimating equation
 
 $$
 \begin{aligned}
-\sum_{i=1}^n K_h(\text{age}_i - x) \ell(Y; \alpha_{11} + \alpha_{12} (\text{age}_i - x) + \alpha_{21} + \alpha_{22} (\text{age}_i - x) + \alpha_{31} + \alpha_{32} (\text{age}_i - x)) = 0
+\sum_{i=1}^n K_h(\text{age}_i - x) \ell(Y; A) = 0
 \end{aligned}
 $$
 
-where $\ell(Y; \theta)$ is the log-likelihood for a Bernoulli random variable and $K_h(x) = K(x/h)/h$ is a kernel function with bandwidth $h$.
-We used a Gaussian kernel function for our analysis.
+where $\ell(Y; \mathbf{\alpha})$ is the log-likelihood for a Bernoulli random variable and $K_h(x) = K(x/h)/h$ is a kernel function with bandwidth $h$.
+We do this by selecting 100 target ages between the minimum and maximum age in the dataset and fit a local linear model at each target age weighted by the Gaussian kernel.
+We estimate $\hat{\theta}_1(x) = \hat{\alpha}_{11}$, $\hat{\theta}_2(x) = \hat{\alpha}_{21}$, and $\hat{\theta}_3(x) = \hat{\alpha}_{31}$ at each target age.
 The bandwidth $h$ was selected via leave-one out cross validation using deviance as the loss function
 
 $$
@@ -538,28 +553,24 @@ where $\hat{p}_i$ is the predicted probability of survival for patient $i$.
 ### Partially local linear kernel smoothing for age-varying treatment
 
 Based on the results from the local linear kernel model, we fit what we call a partially local linear kernel model.
-This model first fits a global logistic regression model with age and transplant terms and then fits a local linear kernel model on the residuals.
+We first fit a global logistic regression model with age and transplant terms and then fits a local linear kernel model on the residuals.
 The global model is
 
 $$
-g(\mu_i) = \beta_0 + \beta_1 \text{transplant}_i + \beta_2 \text{age}_i
+\text{logit}(\mu_i) = \beta_0 + \beta_1 \text{transplant}_i + \beta_2 \text{age}_i
 $$
 
-Then, let $r_i$ be the Pearson residuals from the global model, $r_i = \frac{y_i - \hat{\mu}_i}{\sqrt{\text{Var}(y_i)}}$.
-We fit a local linear model to the Pearson residuals
-
-$$
-r_i = \theta_1(\text{age}_i) + \theta_2(\text{age}_i) \text{surgery}_i
-$$
-
-where $\theta_1(x) = \alpha_{11} + \alpha_{12} x$ and $\theta_2(x) = \alpha_{21} + \alpha_{22} x$.
+Let $r_i$ be the Pearson residuals from the global model, $r_i = \frac{y_i - \hat{\mu}_i}{\sqrt{\text{Var}(y_i)}}$.
+We fit a local linear model to the Pearson residuals $r_i = \theta_1(\text{age}_i) + \theta_2(\text{age}_i) \text{surgery}_i$ where we use local linear approximations to estimate $\hat{\theta}_1$ and $\hat{\theta}_2$ with the intercept terms as describe in the previous section.
+We then re-scale the estimates for $\hat{\theta}_1$ and $\hat{\theta}_2$ by multiplying by $\sqrt{\text{Var}(y_i)}$.
 This allows us to have a global term for transplant and age and a local term for bypass surgery.
 
 ## Discussion
 
-Our analysis of the Stanford Heart Transplant dataset suggests that there is a age-varying effect for prior bypass surgery and potentially a age-varying effect for transplant.
+Our analysis of the Stanford Heart Transplant dataset suggests that there is a age-varying effect for prior bypass surgery and potentially an age-varying effect for transplant.
 Since this dataset has a relatively small sample size it is difficult to include more covariates due to a lack of power.
 Another additional analysis that could be performed would be to perform the Cox proportional hazards assumption using local linear estimation for example using a method similar to [@cai2003].
+We also acknowledge that the kernel models are missing standard errors and confidence intervals for the predicted probabilities which is a limitation.
 Additionally, there are many potentially useful covariates to include for each patient that are both fixed and time-varying coefficients.
 For more complex models and covariates, we would need a larger dataset.
 Some potential datasets would be the Scientific Registry of Transplant Recipients [@srtr].

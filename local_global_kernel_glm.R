@@ -10,7 +10,7 @@ target_ages <- seq(min(heart$age), max(heart$age), length.out = 100)
 # Step 1: Fit the global logistic model
 global_fit <- glm(y ~ transplant + age, data = data, family = binomial())
 
-data$residuals <- residuals(global_fit, type = "deviance")#, type = "response")  # Response residuals
+data$residuals <- residuals(global_fit, type = "pearson")#, type = "response")  # Response residuals
 
 # Step 2: Fit the local linear model for residuals
 fit_local_linear <- function(data, target_ages, bandwidth) {
@@ -46,7 +46,7 @@ predict_partial_local_logistic <- function(globalfit, localfit, newdata, type = 
   global_pred <- predict(globalfit, newdata = newdata, type = "link")
   local_res <- localfit[,"(Intercept)"] + surgery_val * localfit[,"surgery"]
 
-  final_pred <- predict(globalfit, newdata = newdata, type = "link") + local_res
+  final_pred <- predict(globalfit, newdata = newdata, type = "link") + local_res * sqrt(var(globalfit$data$event))
 
   if (type == "link") {
     return(final_pred)
@@ -72,6 +72,7 @@ if (FALSE) {
       - 2 * sum(yi * log(p_hat) + (1 - yi) * log(1 - p_hat))
     }))
   })
+  cv_bandwidth <- cv_results_partial_local_kernel$bandwidth[which.min(cv_results_partial_local_kernel$deviance)]
   saveRDS(data.frame(bandwidth = bandwidth, deviance = unlist(cv_results_partial_local)), "cv_results_partial_local_kernel.rds")
 }
 
