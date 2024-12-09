@@ -10,7 +10,7 @@ execute:
   warning: false
 format:
   pdf:
-    fig-pos: 'h'
+    fig-pos: 'H'
     documentclass: article
     fontsize: 12pt
     geometry:
@@ -52,6 +52,8 @@ heart$transplant_fct <- as.factor(heart$transplant)
 heart2$transplant_fct <- as.factor(heart2$transplant)
 heart2$event <- heart2$fustat
 levels(heart$transplant_fct) <- c("No transplant", "Transplant")
+
+transplant_factor_levels <- c("No transplant", "Transplant")s
 
 rm(heart)
 heart <- heart2
@@ -197,8 +199,6 @@ plot_data_logit <- bind_rows(
   upper_ci = (1 - gam_preds_logit_mod2$fit) + 1.96 * gam_preds_logit_mod2$se.fit,
   model = "Age-varying transplant")
 )
-
-factor_levels <- c("No transplant", "Transplant")
   
 ggplot(plot_data_logit) +
   facet_grid(
@@ -216,12 +216,12 @@ ggplot(plot_data_logit) +
   theme_classic() +
   scale_color_manual(
     name = "",
-    labels = factor_levels,
+    labels = transplant_factor_levels,
     values = colortheme2
   ) +
   scale_fill_manual(
     name = "",
-    labels = factor_levels,
+    labels = transplant_factor_levels,
     values = colortheme2
     ) +
   labs(title = "Predicted survival probabilities from GAM logistic regression",
@@ -229,6 +229,62 @@ ggplot(plot_data_logit) +
   coord_cartesian(ylim = c(0, 1)) +
   scale_y_continuous(breaks = c(0, 0.5, 1))
 ```
+
+### Logistic regression local linear kernel model
+
+We also fit a local linear logistic regression model to the binary outcome of survival to investigate the relationship between age, transplant status, and survival.
+We used a Gaussian kernel function to weight the contribution of each patient to the local linear fit and used 100 target ages between the minimum and maximum age in the dataset.
+For bandwidths of 5, 15, and 25, we fit the local linear logistic regression model and plot the results in @fig-local-kernel-glm.
+Our leave-out-out cross-validations results indicate that the optimal bandwidth increases monotonically  (See @fig-local-kernel-cv-results in Appendix) but this is not necessarily only due to bandwidth selection.
+The results show that the predicted survival probabilities are sensitive to the bandwidth and that the age-varying bypass surgery term appears to have a different relationship with survival than the age-varying transplant term.
+The transplant age-varying term quickly appears linear but the bypass surgery term has a more complex relationship with survival.
+
+```{r local-kernel-glm}
+#| label: fig-local-kernel-glm
+#| fig-height: 4
+#| fig-width: 8
+#| fig-cap: "Predicted survival probabilities from local linear logistic kernel regression for varying bandwidths. "
+source("local_kernel_glm.R")
+
+plot_bandwidth <- c(5,10,15,20)
+pred_results <- bind_rows(lapply(plot_bandwidth, function(b) {
+  # Compute coefficients for each target age
+  results <- fit_local_logistic(heart, target_ages, b)
+
+  pred_newdata <- expand.grid(
+    age = target_ages,
+    transplant = c(0, 1),
+    surgery = c(0, 1)
+  )
+
+  pred_newdata$pred <-  predict_local_logistic(results, pred_newdata, type = "response")
+
+  pred_newdata$bandwidth <- b
+  pred_newdata
+}))
+
+ggplot(pred_results) +
+  facet_wrap(~ bandwidth,
+             labeller = label_both) +
+  geom_line(
+    aes(
+      x = age,
+      y = pred,
+      color = factor(transplant),
+      linetype = factor(surgery))) +
+  scale_color_manual(
+    name = "",
+    labels = transplant_factor_levels,
+    values = colortheme2
+  ) +
+  scale_fill_manual(
+    name = "",
+    labels = transplant_factor_levels,
+    values = colortheme2
+  )
+```
+
+Based on the results from the smoothing spline, it seems like a lower bandwidth would be more appropriate for the age-varying bypass surgery term and high bandwidth (global logistic regression) is better for the age-varying transplant term.
 
 ### Cox Proportional Hazard Age-Varying Models
 
@@ -275,7 +331,7 @@ plot_data <- cbind(
   lower_ci = gam_preds$fit - 1.96 * gam_preds$se.fit,
   upper_ci = gam_preds$fit + 1.96 * gam_preds$se.fit)
 
-factor_levels <- c("No transplant", "Transplant")
+transplant_factor_levels <- c("No transplant", "Transplant")
   
 ggplot(plot_data) +
   facet_grid(
@@ -298,12 +354,12 @@ ggplot(plot_data) +
   ) +
   scale_color_manual(
     name = "",
-    labels = factor_levels,
+    labels = transplant_factor_levels,
     values = colortheme2
     ) +
   scale_fill_manual(
     name = "",
-    labels = factor_levels,
+    labels = transplant_factor_levels,
     values = colortheme2
     ) +
   labs(title = "Predicted survival probabilities from GAM",
@@ -312,39 +368,42 @@ ggplot(plot_data) +
   scale_y_continuous(breaks = c(0, 0.5, 1))
 ```
 
-
 ## Methods
 
 ### Varying coefficients via smoothing splines
 
 We varying coefficient models with penalized B-splines for the binary outcome of survival as well a Cox proportional hazards model for time-to-event data.
 Let $\mu_i$ be the probability that patient $i$ survives.
-We model the log-odds of survival as a function of patient age and transplant status using a logistic regression varying-coefficient model:
+We model the log-odds of survival as a function of patient age and transplant status using the following logistic regression varying-coefficient models:
 
-\begin{align}
-\text{logit}(\mu_i) &= \beta_0 + \beta_1 \cdot \text{surgery}_i + \beta_2 \cdot \text{transplant}_i + \beta_3 \cdot \text{age}_i + \beta_4 \cdot (\text{surgery}_i \cdot \text{transplant}_i) \nonumber \\
-    &\quad\quad +  \beta_5 \cdot (\text{surgery}_i \cdot \text{age}_i) + \beta_6 \cdot (\text{transplant}_i \cdot \text{age}_i) + \beta_7 \cdot (\text{surgery}_i \cdot \text{transplant}_i \cdot \text{age}_i) \label{eq:logit1}\\
-\text{logit}(\mu_i) &= \beta_0 + \beta_1 \cdot \text{surgery}_i + \beta_2 \cdot \text{transplant}_i + \theta_{\text{surgery}}(\text{age}_i)\cdot \text{surgery}_i \label{eq:logit2}\\
-\text{logit}(\mu_i) &= \beta_0 + \beta_1 \cdot \text{surgery}_i + \beta_2 \cdot \text{transplant}_i + \theta_{\text{transplant}}(\text{age}_i)\cdot \text{transplant}_i \label{eq:logit3} \\
+$$
+\begin{aligned}
+\text{logit}(\mu_i) &= \beta_0 + \beta_1 \cdot \text{surgery}_i + \beta_2 \cdot \text{transplant}_i + \beta_3 \cdot \text{age}_i + \beta_4 \cdot (\text{surgery}_i \cdot \text{transplant}_i)  \\
+    &\quad\quad +  \beta_5 \cdot (\text{surgery}_i \cdot \text{age}_i) + \beta_6 \cdot (\text{transplant}_i \cdot \text{age}_i) + \beta_7 \cdot (\text{surgery}_i \cdot \text{transplant}_i \cdot \text{age}_i) \\
+\text{logit}(\mu_i) &= \beta_0 + \beta_1 \cdot \text{surgery}_i + \beta_2 \cdot \text{transplant}_i + \theta_{\text{surgery}}(\text{age}_i)\cdot \text{surgery}_i \\
+\text{logit}(\mu_i) &= \beta_0 + \beta_1 \cdot \text{surgery}_i + \beta_2 \cdot \text{transplant}_i + \theta_{\text{transplant}}(\text{age}_i)\cdot \text{transplant}_i  \\
 \text{logit}(\mu_i) &= \beta_0 + \beta_1 \cdot \text{surgery}_i + \beta_2 \cdot \text{transplant}_i\\
-&\quad\quad +\theta_{\text{surgery}}(\text{age}_i)\cdot \text{surgery}_i + \theta_{\text{transplant}}(\text{age}_i) \cdot \text{transplant}_i \label{eq:logit4}
-\end{align}
+&\quad\quad +\theta_{\text{surgery}}(\text{age}_i)\cdot \text{surgery}_i + \theta_{\text{transplant}}(\text{age}_i) \cdot \text{transplant}_i 
+\end{aligned}
+$$
 
-where $\theta_1(x)$ and $\theta_2(x)$ are smoothing splines of age for patients.
+where $\theta_{surgery}(x)$ and $\theta_{transplant}(x)$ are smoothing B-splines of age for patients.
 We include treatment as a fixed effect as smoothing splines are centered so we need to include an intercept to retain the correct interpretation of the treatment effect.
-For the censored time-to-event data, we fit one linear Cox proportional hazards models, and two with varying-age smoothing spline coefficients for treatment and surgery.
+For the censored time-to-event data, we fit one linear Cox proportional hazards models, and the same three varying coefficient models as in the case of the logistic regression model.
 
-\begin{align}
-\lambda_{linear}(t_i \mid X) &= \lambda_0(t_i) \exp\{ \beta_0 + \beta_1 \cdot \text{surgery}_i + \beta_2 \cdot \text{transplant}_i + \beta_3 \cdot \text{age}_i + \beta_4 \cdot (\text{surgery}_i \cdot \text{transplant}_i) \nonumber\\
+$$
+\begin{aligned}
+\lambda_{linear}(t_i \mid X) &= \lambda_0(t_i) \exp\{ \beta_0 + \beta_1 \cdot \text{surgery}_i + \beta_2 \cdot \text{transplant}_i + \beta_3 \cdot \text{age}_i + \beta_4 \cdot (\text{surgery}_i \cdot \text{transplant}_i) \\
     &\quad\quad\quad +  \beta_5 \cdot (\text{surgery}_i \cdot \text{age}_i) + \beta_6 \cdot (\text{transplant}_i \cdot \text{age}_i) + \beta_7 \cdot (\text{surgery}_i \cdot \text{transplant}_i \cdot \text{age}_i) \} \\
 \lambda_{1}(t_i \mid X) &= \lambda_0(t_i) \exp\{
   \beta_0 + \beta_1 \cdot \text{surgery}_i + \beta_2 \cdot \text{transplant}_i +         \theta_{\text{surgery}}(\text{age}_i)\cdot \text{surgery}_i\} \\
 \lambda_{2}(t_i \mid X) &= \lambda_0(t_i) \exp\{
   \beta_0 + \beta_1 \cdot \text{surgery}_i + \beta_2 \cdot \text{transplant}_i +     \theta_{\text{transplant}}(\text{age}_i)\cdot \text{transplant}_i \} \\
 \lambda_{3}(t_i \mid X) &= \lambda_0(t_i) \exp\{
-  \beta_0 + \beta_1 \cdot \text{surgery}_i + \beta_2 \cdot \text{transplant}_i +  \beta_3 \text{surgery}_i \cdot \text{transplant}_i \nonumber\\
+  \beta_0 + \beta_1 \cdot \text{surgery}_i + \beta_2 \cdot \text{transplant}_i +  \beta_3 \text{surgery}_i \cdot \text{transplant}_i \\
 &\quad\quad\quad\quad + \theta_{\text{surgery}}(\text{age}_i)\cdot \text{surgery}_i +  \theta_{\text{transplant}}(\text{age}_i) \cdot \text{transplant}_i \}
-\end{align}
+\end{aligned}
+$$
 
 All smoothing spline models were fit using B-splines with the mgcv package [@wood2011] in R.
 The credible intervals are computed from the method described in [@marra2012].
@@ -357,25 +416,39 @@ Our setup is similar to the varying coefficient model but we use a kernel functi
 
 $$
 \begin{aligned}
-g(\mu_i) &= \theta_1(\text{age}_i) + \theta_2(\text{age}_i) TRT_i
+g(\mu_i) &= \theta_1(\text{age}_i) + \theta_2(\text{age}_i) \text{transplant}_i + \theta_3(\text{age}_i) \text{surgery}_i
 \end{aligned}
 $$
 
-We use a local linear approximations $\theta_1(x) = \alpha_{11} + \alpha_{12} x$ and $\theta_2(x) = \alpha_{21} + \alpha_{22} x$ and solve the estimating equation
+We use a local linear approximations $\theta_1(x) = \alpha_{11} + \alpha_{12} x$, $\theta_2(x) = \alpha_{21} + \alpha_{22} x$, and $\theta_3(x) = \alpha_{31} + \alpha_{32} x$ and solve the estimating equation
 
-TODO: Fix this, should be on the logit scale
 $$
-\sum_{i=1}^n K_h(\text{age}_i - x) \left[ Y_i - \theta_1(x) - \theta_2(x) T_i \right] = 0
+\begin{aligned}
+\sum_{i=1}^n K_h(\text{age}_i - x) \ell(Y; \alpha_{11} + \alpha_{12} (\text{age}_i - x) + \alpha_{21} + \alpha_{22} (\text{age}_i - x) + \alpha_{31} + \alpha_{32} (\text{age}_i - x)) = 0
+\end{aligned}
 $$
 
-where $K_h$ is a kernel function with bandwidth $h$.
-TODO: Which kernel function did we use?
+where $\ell(Y; \theta)$ is the log-likelihood for a Bernoulli random variable and $K_h(x) = K(x/h)/h$ is a kernel function with bandwidth $h$.
+We used a Gaussian kernel function for our analysis.
+The bandwidth $h$ was selected via leave-one out cross validation using deviance as the loss function
+
+$$
+\begin{aligned}
+D(h) &= -\frac{2}{n} \sum_{i=1}^n [y_i \log(\hat{p}_i) + (1 - y_i) \log(1 - \hat{p}_i))]
+\end{aligned}
+$$
+
+where $\hat{p}_i$ is the predicted probability of survival for patient $i$.
+
 
 ## Discussion
 
 Our analysis of the Stanford Heart Transplant dataset suggests that there is potentially a age-varying effect for transplant.
 Since this dataset has a relatively small sample size it is difficult to include more covariates due to a lack of power.
 Another additional analysis that could be performed would be to perform the Cox proportional hazards assumption using local linear estimation for example using a method similar to [@cai2003].
+Our local linear logistic regression model could also be improved by modeling the age-varying terms separately.
+Based on the results from the smoothing spline, it seems like a lower bandwidth would be more appropriate for the age-varying bypass surgery term and high bandwidth (global logistic regression) is better for the age-varying transplant term.
+This could be done via an alternative model with a global intercept term for transplant and a local linear kernel for bypass surgery.
 Additionally, there are many potentially useful covariates to include for each patient that are both fixed and time-varying coefficients.
 For more complex models and covariates, we would need a larger dataset.
 Some potential datasets would be the Scientific Registry of Transplant Recipients [@srtr].
@@ -490,4 +563,19 @@ ggplot(., aes(x = age, y = futime)) +
   ylab("Follow-up time") +
   xlab("Age") +
   ylim(c(0, max(heart2$futime) + 10))
+```
+
+```{r local-kernel-glm-cv-results}
+#| label: fig-local-kernel-cv-results
+#| fig-height: 3
+#| fig-width: 6
+#| fig-cap: "Cross validation results for local linear kernel logistic regression model with Gaussian kernel. The CV results indicate that a global logistic regression fits best given the current model formulation."
+
+cv_results <- readRDS("cv_results.rds")
+ggplot(cv_results, aes(x = bandwidth, y = deviance)) +
+  geom_line() +
+  geom_point() +
+  theme_classic() +
+  labs(title = "Leave-one-out cross-validation error for local linear logistic regression",
+       x = "Bandwidth", y = "Cross-validation deviance")
 ```
