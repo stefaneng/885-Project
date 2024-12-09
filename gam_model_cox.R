@@ -6,9 +6,9 @@ heart$age <- heart$age + 48
 
 gam_cox_formulas <- list(
   "futime ~ surgery * transplant * age",
-  'futime ~ surgery + transplant + s(age, by = surgery, bs = "bs")',
+  'futime ~ surgery:transplant + surgery + transplant + s(age, by = surgery, bs = "bs")',
   "futime ~ surgery + transplant + s(age, by = transplant, bs = 'bs')",
-  "futime ~ surgery:transplant + surgery + transplant + s(age, by = transplant, bs = 'bs') + s(age, by = surgery, bs = 'bs')"
+  "futime ~ surgery + transplant + s(age, by = transplant, bs = 'bs') + s(age, by = surgery, bs = 'bs')"
 )
 
 nice_formulas <- lapply(gam_cox_formulas, function(fc) {

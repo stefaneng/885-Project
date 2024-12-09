@@ -2,7 +2,7 @@ gam_glm_formulas <- list(
   "event ~ surgery * transplant * age",
   'event ~ surgery + transplant + s(age, by = surgery, bs = "bs")',
   "event ~ surgery + transplant + s(age, by = transplant, bs = 'bs')",
-  "event ~ surgery:transplant + surgery + transplant + s(age, by = transplant, bs = 'bs') + s(age, by = surgery, bs = 'bs')"
+  "event ~ surgery + transplant + s(age, by = transplant, bs = 'bs') + s(age, by = surgery, bs = 'bs')"
 )
 
 gam_mods_glm <- lapply(gam_glm_formulas, function(fc) {
