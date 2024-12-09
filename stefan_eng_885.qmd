@@ -53,7 +53,7 @@ heart2$transplant_fct <- as.factor(heart2$transplant)
 heart2$event <- heart2$fustat
 levels(heart$transplant_fct) <- c("No transplant", "Transplant")
 
-transplant_factor_levels <- c("No transplant", "Transplant")s
+transplant_factor_levels <- c("No transplant", "Transplant")
 
 rm(heart)
 heart <- heart2
